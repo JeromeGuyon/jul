@@ -65,7 +65,10 @@ its `model_type` and reads it as it was trained, not as a decoder (`lib/jul/enco
 - the vector is the mean of the layer over the whole sequence (the sentence embedding e5 was trained to
   produce), not a last token; zero-shot is plain embedding similarity between state and options;
 - the prompts are the model's own input convention (`query: {state}` for e5), no chat template and no
-  "in one word" cue (`Backbone.templates`);
+  "in one word" cue (`Backbone.templates`). A model declares it in its `config_sentence_transformers.json`
+  (`"prompts": {"query": "query: "}`); for repos that do not, the official e5 ones included, JuL
+  reads it from a list by repo name, `lib/jul/assets/text_prefixes.json`, which
+  `$JUL_HOME/text_prefixes.json` extends or overrides;
 - attention is bidirectional, so no prefix can be cached: the prefix runs again with each query, and a
   sequence is cut to the model's positions (512), the input first, then the prefix;
 - no logits: the letters reading and decision models need a decoder.

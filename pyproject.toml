@@ -60,7 +60,7 @@ package-dir = {"jul" = "lib/jul", "jul.backends" = "lib/jul/backends", "jul.lab"
 packages = ["jul", "jul.backends", "jul.lab", "jul_cli"]
 
 [tool.setuptools.package-data]
-jul = ["assets/*.npy", "assets/presets/*", "py.typed"]
+jul = ["assets/*.npy", "assets/*.json", "assets/presets/*", "py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

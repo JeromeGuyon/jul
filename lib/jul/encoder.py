@@ -24,7 +24,9 @@ in 4 ms against 55 ms per value on one CPU thread (jul-lambda, 2026-09-25).
 
 from __future__ import annotations
 
+import json
 import warnings
+from pathlib import Path
 
 import numpy as np
 
@@ -32,15 +34,50 @@ import numpy as np
 MODEL_TYPES = {"bert", "xlm-roberta", "roberta", "distilbert", "camembert", "deberta-v2", "electra",
                "mpnet", "modernbert", "nomic_bert", "new"}
 
-#: Input conventions of known embedding models, by repo prefix (the source repo of an export).
-TEXT_PREFIXES = {"intfloat/multilingual-e5": "query: ", "intfloat/e5": "query: "}
+#: Where a model declares its input convention: sentence-transformers' prompts, {"query": ...}.
+PROMPTS_FILE = "config_sentence_transformers.json"
+#: The conventions of models that declare none, by repo prefix: shipped with jul, then the user's.
+PREFIXES_FILE = "text_prefixes.json"
 
 #: Removed from a "question_options" template to get the "question" one (presets.formulations_for).
 OPTIONS_CLAUSES = ("\nPossible answers: {options}.", " ({options})")
 
 
+def declared_prompts(repo: str) -> dict:
+    """The `prompts` of the model's sentence-transformers config (a local directory or a Hub repo),
+    {} when it has none or it cannot be read."""
+    path = Path(repo) / PROMPTS_FILE
+    if not path.is_file():
+        try:
+            from huggingface_hub import hf_hub_download
+            path = Path(hf_hub_download(repo, PROMPTS_FILE))
+        except Exception:
+            return {}
+    try:
+        return dict(json.loads(path.read_text(encoding="utf-8")).get("prompts") or {})
+    except (OSError, ValueError):
+        return {}
+
+
+def known_prefixes() -> dict[str, str]:
+    """{repo prefix: input prefix} from assets/text_prefixes.json, overridden by $JUL_HOME's copy."""
+    from .home import JUL_HOME
+    known = {}
+    for path in (Path(__file__).resolve().parent / "assets" / PREFIXES_FILE, JUL_HOME / PREFIXES_FILE):
+        if path.is_file():
+            known.update(json.loads(path.read_text(encoding="utf-8")).get("prefixes") or {})
+    return known
+
+
 def text_prefix(repo: str) -> str:
-    return next((p for r, p in TEXT_PREFIXES.items() if repo.startswith(r)), "")
+    """The text an input is prefixed with: the model's declared "query" prompt, else the convention
+    listed for its repo (`known_prefixes`, longest match), else nothing."""
+    declared = declared_prompts(repo)
+    if "query" in declared:
+        return declared["query"]
+    known = known_prefixes()
+    matches = [r for r in known if repo.startswith(r)]
+    return known[max(matches, key=len)] if matches else ""
 
 
 def templates(prefix: str = "") -> dict[str, str]:

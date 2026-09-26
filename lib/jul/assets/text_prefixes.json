@@ -1,0 +1,7 @@
+{
+  "about": "Input prefixes of embedding models that do not declare theirs, by repo name prefix. A model that declares one in config_sentence_transformers.json needs no entry. $JUL_HOME/text_prefixes.json (same format) adds entries or overrides these.",
+  "prefixes": {
+    "intfloat/multilingual-e5": "query: ",
+    "intfloat/e5": "query: "
+  }
+}

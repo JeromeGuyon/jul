@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from jul.backbone import Backbone, PromptTemplate
-from jul.encoder import templates
+from jul.encoder import PROMPTS_FILE, templates, text_prefix
 
 HAS_EXPORT = all(importlib.util.find_spec(m) for m in ("torch", "onnx", "onnxscript", "onnxruntime"))
 pytestmark = pytest.mark.skipif(not HAS_EXPORT, reason="needs torch, onnx, onnxscript, onnxruntime")
@@ -130,3 +130,21 @@ def test_a_bundle_packed_on_an_encoder_answers_what_its_client_answers(tiny_enco
                            atol=1e-3)
         assert abs(got["urgent"].noul - want["urgent"].noul) < 1e-3
     client.close()
+
+
+def test_a_model_declares_its_query_prefix_in_its_sentence_transformers_config(tmp_path):
+    (tmp_path / PROMPTS_FILE).write_text('{"prompts": {"query": "query: ", "passage": "passage: "}}')
+    assert text_prefix(str(tmp_path)) == "query: "
+
+
+def test_without_a_declared_prompt_the_known_repos_keep_their_prefix(tmp_path):
+    assert text_prefix(str(tmp_path)) == ""
+    assert text_prefix("intfloat/multilingual-e5-small") == "query: "
+
+
+def test_the_prefix_list_can_be_extended_by_the_user(tmp_path, monkeypatch):
+    import jul.home
+    (tmp_path / "text_prefixes.json").write_text('{"prefixes": {"acme/embed": "search_query: "}}')
+    monkeypatch.setattr(jul.home, "JUL_HOME", tmp_path)
+    assert text_prefix("acme/embed-small") == "search_query: "
+    assert text_prefix("intfloat/multilingual-e5-small") == "query: "

@@ -18,19 +18,23 @@
 </div>
 
 JuL answers typed questions about a piece of text: pick an option, say yes or no, give a score. Each
-answer comes with a probability.
+answer comes with a probability. The model is stopped one step before its first syllable and the answer
+is read straight out of its hidden states: no monologue, no reasoning trace, no opinion on the matter.
+It has nothing to say, and it says it in 55 milliseconds.
 
-It runs on your own hardware: a laptop, a server in your rack, a CPU-only container. Your text never
-goes to a third party and there is no per-call bill, so you can leave it running 24/7 on your own
-infrastructure. The model weights are downloaded once from the Hugging Face Hub, or loaded from a
-local path; after that, `HF_HUB_OFFLINE=1` keeps it off the network entirely.
+It runs on your own machines, from a Mac to a Linux server, so you can keep it running 24/7 on your own
+infrastructure. Your text never goes to a third party and there is no per-call bill. The model weights
+are downloaded once from the Hugging Face Hub, or loaded from a local path; after that it runs with no
+network at all.
 
 ## Why JuL
 
-- Zero-shot: the default model scores 0.857 on Jev's public benchmark without seeing one example of
-  its tasks. On AG News, the one task embedding models haven't trained on, `wemm-4b` gets 0.95 and Jev 0.91.
-- Many options: 0.87 on Banking77's 72 intents (a task in MTEB, see [Results](#results)). Option
-  vectors are cached, so adding options barely changes the cost of a call.
+- Zero-shot: the default model scores 0.857 on Jev's public benchmark without one example of its tasks.
+  Layers, temperatures and centers were fitted on dev sets the benchmark never touches. On AG News,
+  the one task embedding models haven't trained on, `wemm-4b` gets 0.95 and Jev 0.91.
+- Many options: option vectors are computed once and cached, so adding options barely changes the cost
+  of a call. On Banking77's 72 intents the default model gets 0.87, on a task its training data
+  (MTEB) contains.
 - Probabilities you can use: ECE 0.084, so you can automate above a confidence threshold and send the
   rest to a human.
 - Small and fast: 2.6 GB and 55 ms per decision on a Mac. `f2llm-1.7b` fits in 1 GB and answers in 24 ms.
@@ -76,22 +80,22 @@ protocol ([docs/serve.md](https://github.com/usejul/jul/blob/main/docs/serve.md)
 
 ## Showcases
 
-Eight demos from [jul-showcases](https://github.com/usejul/jul-showcases), each an idea
-from [jevable.com](https://jevable.com/) running entirely on device, for $0.
+Eight demos from [jul-showcases](https://github.com/usejul/jul-showcases), each an idea from
+[jevable.com](https://jevable.com/) running entirely on device, for $0.
 
 <table>
 <tr>
 <td width="50%" valign="top">
 <img src="https://raw.githubusercontent.com/usejul/jul/main/docs/assets/showcase-sncf.gif" alt="A browser agent booking a Lyon to Toulouse train on SNCF Connect"><br>
-<b><a href="https://github.com/usejul/jul-showcases/tree/main/browser-agent">A browser agent on SNCF Connect</a>.</b> JuL picks each action from the page's accessibility tree
-and the Apple Foundation Model types the city names. Six steps from the homepage to priced
-results, about 130 ms per decision.
+<b><a href="https://github.com/usejul/jul-showcases/tree/main/browser-agent">Browser agent on SNCF Connect</a>.</b>
+JuL picks each action from the page's accessibility tree and the Apple Foundation Model types the
+city names (macOS 26). Six steps from the homepage to priced results, about 130 ms per decision.
 </td>
 <td width="50%" valign="top">
-<img src="https://raw.githubusercontent.com/usejul/jul/main/docs/assets/showcase-notifications.svg" alt="Terminal output: JuL keeps an OTP, a payment and an appointment, and mutes a flash sale and a fake iPhone giveaway"><br>
-<b><a href="https://github.com/usejul/jul-showcases/tree/main/notification-triage">Notification triage</a>.</b> One yes/no
-question per notification. Your OTP code and your doctor's appointment get through; the flash sale
-and the "free iPhone" are muted.
+<img src="https://raw.githubusercontent.com/usejul/jul/main/docs/assets/showcase-triage.svg" alt="Terminal output: 50,000 support tickets triaged in 668 s at 82.9% accuracy for $0"><br>
+<b><a href="https://github.com/usejul/jul-showcases/tree/main/ticket-triage-scale">Ticket triage at scale</a>.</b>
+50,000 real support tickets routed in 668 s, 82.9% accurate, for $0, on an Apple Silicon Mac. At
+that rate a million take about 3.7 hours.
 </td>
 </tr>
 </table>
@@ -123,9 +127,8 @@ To pick the backend yourself (`jul[mlx]`, `jul[torch]`, `jul[onnx]`), see
   <img src="https://raw.githubusercontent.com/usejul/jul/main/docs/assets/how-it-works.svg" alt="The text and the option descriptions go through the same model; the answer is the closest option vector" width="760">
 </picture>
 
-The model is stopped one step before it would start writing. JuL reads the hidden state it built for
-your text and compares it with the vectors of your option descriptions. Your task never reaches the
-weights, so you can change the options between two calls, or swap the model, without retraining
+JuL reads the hidden state the model built for your text and compares it with the vectors of your
+option descriptions. Your task never reaches the weights, so you can change the options between two calls, or swap the model, without retraining
 anything. When it is off on your data, `client.autotune(...)` fits a small head on labeled examples
 and keeps it only if it beats zero-shot in cross-validation
 ([docs/tuning.md](https://github.com/usejul/jul/blob/main/docs/tuning.md)).
@@ -141,8 +144,9 @@ Jev's published benchmark, 300 examples, zero-shot for every JuL model, run with
 `scripts/bench_jul.py`. Each mean is ±3 points. Banking77 and Emotion are in MTEB, which the
 `wemm-*` and `f2llm-*` models trained on, so AG News is the clean comparison: 0.95 for `wemm-4b`,
 0.91 for Jev. The default model's ECE is 0.084 against Jev's 0.156, which is what lets you automate
-above a confidence threshold. We have only measured English text so far. Per-task scores, the 17
-models measured and the tuned results are in
+above a confidence threshold. Every setting was fitted on English, and we haven't tested domains far
+from this kind of text (sensor logs, chemistry and so on). Per-task scores, the 17 models measured and
+the tuned results are in
 [docs/benchmarks.md](https://github.com/usejul/jul/blob/main/docs/benchmarks.md).
 
 ### The baseline worth remembering

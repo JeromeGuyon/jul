@@ -154,6 +154,13 @@ class Backbone:
         return Path(snapshot_download(self.repo))
 
 
+def with_prefix(prefix: tuple, queries, pools):
+    """Each query behind its prefix, and its pooled positions moved past the prefix."""
+    n = len(prefix)
+    seqs = [list(prefix) + list(q) for q in queries]
+    return seqs, [(n + p[0], n + p[1]) if p else (n, n + len(q)) for q, p in zip(queries, pools)]
+
+
 @dataclass
 class PromptTemplate:
     """A chat prompt split around the user input: a cached prefix and a per-query suffix."""

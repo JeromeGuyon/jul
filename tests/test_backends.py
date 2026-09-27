@@ -300,3 +300,23 @@ def test_torch_and_mlx_agree_on_the_answer(pair):
     # bf16 kernels differ between the frameworks, and tau ~0.04 amplifies it: measured up to 0.03 on
     # a close call (0.565 / 0.595), 1e-6 on a clear one.
     assert np.abs(results[0] - results[1]).max() < 0.05
+
+
+@pytest.mark.skipif(not all(importlib.util.find_spec(m) for m in ("torch", "onnx", "onnxscript", "onnxruntime")),
+                    reason="the tiny model fixture needs torch, onnx, onnxscript, onnxruntime")
+def test_a_batch_behind_a_prefix_that_cannot_be_repeated_runs_the_prefix_with_each_query(tiny_models):
+    """A recurrent state (Qwen3.5's linear attention) cannot be repeated over a batch: the prefix runs again
+    with every query in one batch, and gives what one query at a time on a copy of the state gives."""
+    from dataclasses import replace
+
+    from jul.backbone import Backbone
+    torch_bb = Backbone(str(tiny_models[0]), "torch")
+    prefix = torch_bb.cache_prefix(torch_bb.encode('This text: "'))
+    frozen = replace(prefix, croppable=False)            # as a recurrent cache would be
+    queries = [torch_bb.encode(t + '" means in one word: "') for t in ("I was charged twice", "ok", "the app crashes on export")]
+    pools = [(0, 3), None, (1, 4)]
+    one_by_one = [torch_bb.forward(q, layers=(2, 3), pool=p, prefix=frozen)[0] for q, p in zip(queries, pools)]
+    batched = torch_bb.forward_batch(queries, layers=(2, 3), pools=pools, prefix=frozen)
+    for a, b in zip(one_by_one, batched):
+        for l in (2, 3):
+            assert np.allclose(a[l], b[l], atol=1e-4), (l, float(np.abs(a[l] - b[l]).max()))

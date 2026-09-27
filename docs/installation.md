@@ -58,6 +58,14 @@ Both backends read many texts through one template in batches: compiling a quest
 context's center, `autotune` and `jul models add`. A group holds at most `JUL_BATCH_TOKENS` tokens
 (rows × longest prompt, 16384) and `JUL_BATCH_SIZE` rows (64). A single call (`ask`) is read alone.
 
+**Models with a recurrent state** (Qwen3.5 and WeMM-Embedding, whose linear-attention layers carry a
+state instead of a key/value cache) cannot repeat a cached prompt prefix over a batch. On PyTorch the
+prefix then runs again with each text, all in one right-padded batch: for WeMM-Embedding-4B on an A10G,
+about 150 texts/s instead of 12 one at a time, with the same vectors (cosine ≥ 0.9994). On MLX they stay
+one at a time behind the cached prefix: there batching gained only ×1.5 on an M4 Pro (20 to 29 texts/s)
+and moved the 4-bit vectors to a cosine of 0.9985, below the 0.999 `jul models add` requires between a
+cached and an uncached reading.
+
 **The two backends do not run the same weights.** The MLX presets are 4-bit; PyTorch loads the
 original bf16 weights. On the same weights the two backends read the same vectors (cosine > 0.9999,
 `tests/test_backends.py`), but 4-bit moves them to a cosine of ~0.95 with bf16. The presets' tau and

@@ -24,7 +24,7 @@ from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokeni
 from transformers.cache_utils import DynamicCache, DynamicLayer
 
 from .. import encoder
-from ..backbone import Backbone
+from ..backbone import Backbone, with_prefix
 
 DTYPES = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}
 
@@ -76,6 +76,8 @@ class _Prefix:
     #: A plain attention KV cache is cropped back to the prefix after each query. Anything else
     #: (recurrent state, sliding window) cannot be rewound: each query runs on a copy.
     croppable: bool
+    #: The prefix's own tokens: a cache that cannot be repeated over a batch is run again with each query.
+    tokens: tuple = ()
 
     def rewind(self) -> None:
         """Back to the prefix, layer by layer: a query that stopped early never reached the layers
@@ -141,9 +143,15 @@ class TorchBackbone(Backbone):
     @torch.inference_mode()
     def forward_batch(self, queries, layers=(), pools=None, prefix: _Prefix | None = None):
         pools = pools or [None] * len(queries)
-        if len(queries) == 1 or (prefix is not None and not prefix.croppable):
-            # a recurrent state is not repeated over a batch: one copy per query, as in `forward`
+        if len(queries) == 1:
             return super().forward_batch(queries, layers, pools, prefix)
+        if prefix is not None and not prefix.croppable:
+            # a recurrent state is not repeated over a batch: the prefix runs again with each query, in one
+            # right-padded batch (causal: the padding never reaches a real token). One query at a time was
+            # 12 texts/s for WeMM-Embedding-4B on an A10G, this ~150.
+            seqs, shifted = with_prefix(prefix.tokens, queries, pools)
+            captured, _, _ = self._run(seqs, None, layers, False, shifted)
+            return [{k: v[i] for k, v in captured.items()} for i in range(len(queries))]
         cache = None
         if prefix is not None:
             cache = copy.deepcopy(prefix.cache)
@@ -154,7 +162,7 @@ class TorchBackbone(Backbone):
     @torch.inference_mode()
     def cache_prefix(self, tokens) -> _Prefix:
         _, _, cache = self._run([tokens], None, logits=True, use_cache=True)
-        return _Prefix(len(tokens), cache, _croppable(cache))
+        return _Prefix(len(tokens), cache, _croppable(cache), tuple(tokens))
 
     @torch.inference_mode()
     def last_hidden(self, tokens, prefix: _Prefix | None = None):

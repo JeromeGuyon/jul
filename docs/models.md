@@ -122,10 +122,10 @@ the limit in its `decision.json` is truncated rather than stretched.
 | Preset                          | Model                               | Layers  |    tau | p50, M4 Pro | p50, M5 Max | Jev bench, zero-shot |
 | ------------------------------- | ----------------------------------- | ------- | -----: | ----------: | ----------: | -------------------- |
 | `wemm-4b-4bit` (alias `accurate`, default) | `usejul/WeMM-Embedding-4B-mlx-4bit` | 31 / 31 | 0.0553 |      146 ms |       55 ms | **0.857**            |
-| `minicpm5-2b` (alias `fast`)    | `openbmb/MiniCPM5-2B-MLX`           | 39 / 40 | 0.0413 |   **62 ms** |             | 0.617                |
+| `minicpm5-2b` (alias `fast`)    | `openbmb/MiniCPM5-2B-MLX`           | 39 / 40 | 0.0413 |   **64 ms** |             | 0.617                |
 
 `wemm-4b-4bit` is the default because it is the most accurate: 10 points above Jev with no training.
-On the same M4 Pro it is 2.4 times slower than `minicpm5-2b`, which stays the fast option.
+On the same M4 Pro it is 2.3 times slower than `minicpm5-2b`, which stays the fast option.
 
 A third option does not read a general model at all: `minicpm5-2b-decision` is MiniCPM5-2B *trained*
 to answer typed questions (a merged LoRA and a pointer head). It has no layer and no tau — it brings

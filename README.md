@@ -1,6 +1,6 @@
 <div align="center">
 
-# JuL, Juste un LLM
+# JuL — Juste un LLM
 
 **Typed decisions on your machine, with the model of your choice.<br>No training, no API, no task learned by heart.**
 
@@ -13,13 +13,45 @@
 [![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20models-usejul-yellow)](https://huggingface.co/usejul)
 [![Website](https://img.shields.io/badge/site-usejul.github.io%2Fjul-black)](https://usejul.github.io/jul/)
 
-[Website](https://usejul.github.io/jul/) · [Showcases](#showcases) · [Quickstart](#quickstart) · [Results](#results) · [Docs](#documentation)
+[Website](https://usejul.github.io/jul/) · [Quickstart](#quickstart) · [Showcases](#showcases) · [Results](#results) · [Docs](#documentation)
 
 </div>
 
 JuL answers typed questions about a piece of text: pick an option, say yes or no, give a score. Each
 answer comes with a probability, it takes about 55 ms on a Mac, and nothing leaves your machine. It is
 a drop-in for the Jev SDK: change the import and your code runs locally.
+
+## Quickstart
+
+```python
+# from typesafe_sdk import TypeSafeClient, Choice, Noul, Score
+from jul import TypeSafeClient, Choice, Noul, Score
+
+client = TypeSafeClient()                             # wemm-4b-4bit, or model="minicpm5-2b"
+
+response = client.system_one(
+    state={"ticket": "I was charged twice for my subscription this month."},
+    questions={
+        "team": Choice(instructions="Which team should handle this ticket?",
+                       criteria={"billing": "payments, invoices, refunds",
+                                 "technical": "bugs, errors, crashes",
+                                 "sales": "pricing, plans, demos"}),
+        "is_bug": Noul(instructions="Does the message report a software bug?"),
+        "frustration": Score(instructions="How frustrated is the customer?",
+                             criteria=["Calm", "Frustrated but civil", "Very angry"]),
+    },
+)
+
+response.choices["team"].choice           # "billing"
+response.choices["team"].probabilities    # {"billing": 0.88, "technical": 0.11, "sales": 0.01}
+response.nouls["is_bug"].noul             # 0.12
+response.scores["frustration"].score      # 1.15
+```
+
+The model compares your text with each option's *description*, so write descriptions a colleague
+would understand; the key is only the name you get back. `AsyncTypeSafeClient` has the same API.
+From the shell, use `jul ask`. Non-Python callers can use `jul serve`, which speaks the Jev HTTP
+protocol ([docs/serve.md](https://github.com/usejul/jul/blob/main/docs/serve.md)).
 
 ## Showcases
 
@@ -59,38 +91,6 @@ jul setup          # picks MLX or PyTorch, installs it, downloads the default mo
 Python ≥ 3.10. The default model weighs 2.6 GB and is downloaded once from the Hugging Face Hub.
 To pick the backend yourself (`jul[mlx]`, `jul[torch]`, `jul[onnx]`), see
 [docs/installation.md](https://github.com/usejul/jul/blob/main/docs/installation.md).
-
-## Quickstart
-
-```python
-# from typesafe_sdk import TypeSafeClient, Choice, Noul, Score
-from jul import TypeSafeClient, Choice, Noul, Score
-
-client = TypeSafeClient()                             # wemm-4b-4bit, or model="minicpm5-2b"
-
-response = client.system_one(
-    state={"ticket": "I was charged twice for my subscription this month."},
-    questions={
-        "team": Choice(instructions="Which team should handle this ticket?",
-                       criteria={"billing": "payments, invoices, refunds",
-                                 "technical": "bugs, errors, crashes",
-                                 "sales": "pricing, plans, demos"}),
-        "is_bug": Noul(instructions="Does the message report a software bug?"),
-        "frustration": Score(instructions="How frustrated is the customer?",
-                             criteria=["Calm", "Frustrated but civil", "Very angry"]),
-    },
-)
-
-response.choices["team"].choice           # "billing"
-response.choices["team"].probabilities    # {"billing": 0.88, "technical": 0.11, "sales": 0.01}
-response.nouls["is_bug"].noul             # 0.12
-response.scores["frustration"].score      # 1.15
-```
-
-The model compares your text with each option's *description*, so write descriptions a colleague
-would understand; the key is only the name you get back. `AsyncTypeSafeClient` has the same API.
-From the shell, use `jul ask`. Non-Python callers can use `jul serve`, which speaks the Jev HTTP
-protocol ([docs/serve.md](https://github.com/usejul/jul/blob/main/docs/serve.md)).
 
 ## How it works
 

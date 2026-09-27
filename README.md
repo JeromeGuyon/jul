@@ -91,13 +91,13 @@ Eight demos from [jul-showcases](https://github.com/usejul/jul-showcases), each 
 <table>
 <tr>
 <td width="50%" valign="top">
-<img src="https://raw.githubusercontent.com/usejul/jul/main/docs/assets/showcase-sncf.gif" alt="A browser agent booking a Lyon to Toulouse train on SNCF Connect"><br>
+<img src="https://raw.githubusercontent.com/usejul/jul/d1f0d236aed437d57b625d36c3841f2d156ee637/docs/assets/showcase-sncf.gif" alt="A browser agent booking a Lyon to Toulouse train on SNCF Connect"><br>
 <b><a href="https://github.com/usejul/jul-showcases/tree/main/browser-agent">Browser agent on SNCF Connect</a>.</b>
 JuL picks each action from the page's accessibility tree and the Apple Foundation Model types the
 city names (macOS 26). Six steps from the homepage to priced results, about 130 ms per decision.
 </td>
 <td width="50%" valign="top">
-<img src="https://raw.githubusercontent.com/usejul/jul/main/docs/assets/showcase-triage.svg" alt="Terminal output: 50,000 support tickets triaged in 668 s at 82.9% accuracy for $0"><br>
+<img src="https://raw.githubusercontent.com/usejul/jul/d1f0d236aed437d57b625d36c3841f2d156ee637/docs/assets/showcase-triage.svg" alt="Terminal output: 50,000 support tickets triaged in 668 s at 82.9% accuracy for $0"><br>
 <b><a href="https://github.com/usejul/jul-showcases/tree/main/ticket-triage-scale">Ticket triage at scale</a>.</b>
 50,000 real support tickets routed in 668 s, 82.9% accurate, for $0, with the small
 `qwen3-embedding-0.6b` on an Apple Silicon Mac. At
@@ -129,8 +129,8 @@ To pick the backend yourself (`jul[mlx]`, `jul[torch]`, `jul[onnx]`), see
 ## How it works
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/usejul/jul/main/docs/assets/how-it-works-dark.svg">
-  <img src="https://raw.githubusercontent.com/usejul/jul/main/docs/assets/how-it-works.svg" alt="The text and the option descriptions go through the same model; the answer is the closest option vector" width="760">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/usejul/jul/d1f0d236aed437d57b625d36c3841f2d156ee637/docs/assets/how-it-works-dark.svg">
+  <img src="https://raw.githubusercontent.com/usejul/jul/d1f0d236aed437d57b625d36c3841f2d156ee637/docs/assets/how-it-works.svg" alt="The text and the option descriptions go through the same model; the answer is the closest option vector" width="760">
 </picture>
 
 JuL reads the hidden state the model built for your text and compares it with the vectors of your
@@ -142,8 +142,8 @@ and keeps it only if it beats zero-shot in cross-validation
 ## Results
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/usejul/jul/main/docs/assets/results-dark.svg">
-  <img src="https://raw.githubusercontent.com/usejul/jul/main/docs/assets/results.svg" alt="Mean accuracy on Jev's benchmark per model" width="760">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/usejul/jul/d1f0d236aed437d57b625d36c3841f2d156ee637/docs/assets/results-dark.svg">
+  <img src="https://raw.githubusercontent.com/usejul/jul/d1f0d236aed437d57b625d36c3841f2d156ee637/docs/assets/results.svg" alt="Mean accuracy on Jev's benchmark per model" width="760">
 </picture>
 
 Jev's published benchmark, 300 examples, zero-shot for every JuL model, run with

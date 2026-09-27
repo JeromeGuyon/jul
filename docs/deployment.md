@@ -65,6 +65,8 @@ among 6), by the jul-lambda showcase (CDK, not published yet):
 The reading is which prompts a message is read with (`formulations=`); the head is what the tuned head
 reads (`features=`). All three bundles use hybrid heads.
 
+Step by step, from the questions to a deployed function (AWS CLI or CDK): [AWS Lambda](aws-lambda.md).
+
 e5-small is the one to deploy: same accuracy as Harrier read the same way, ten times faster, fifteen times
 cheaper, a 2.4 s cold start with the model in the package. Harrier's extra passes (`mixed`) buy emotion
 points at 23 times the price.

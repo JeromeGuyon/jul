@@ -173,15 +173,28 @@ so update both together.
 | `minicpm5-2b` (alias `fast`) | 2.7 GB | 0.617 | 0.757 | built in, 64 ms on an M4 Pro |
 | `minicpm5-2b-decision` | 1.3 GB | see [benchmarks](https://github.com/usejul/jul/blob/main/docs/benchmarks.md) | — | trained decision model, `jul models add` |
 | `e5-small` (ONNX, 8-bit) | 0.09 GB | 0.543 | 0.713 (0.790 hybrid head) | encoder, 6 ms per text on an M4 Pro; needs an ONNX export first, see [models](https://github.com/usejul/jul/blob/main/docs/models.md#micro-models-encoders) |
+| `jul-decision-e5-small` (ONNX, 8-bit) | 0.09 GB (+0.09 GB cross model) | 0.557 | 0.723 (0.780 hybrid head) | e5-small trained on jul decisions, with a [cross model](https://github.com/usejul/jul/blob/main/docs/models.md#cross-models-reading-the-question-and-the-text-together) for Noul and Score (yes/no 0.726 on Kev's typed decisions, against 0.579 with vectors); runs in [AWS Lambda](https://github.com/usejul/jul/blob/main/docs/aws-lambda.md), `jul models add` |
 
 To use another model, run `jul models add <name> --repo <hf-repo>`. It fits the layer, center and
 temperature on the dev sets. The 18 models we measured, encoders, decision models and every setting
 are listed in [docs/models.md](https://github.com/usejul/jul/blob/main/docs/models.md).
 
+## Decisions inside an AWS Lambda
+
+`jul-decision-e5-small` runs inside an AWS Lambda function, model included in the package: 17 ms per
+message and $0.59 per million at 1,769 MB, a 2.4 s cold start, no GPU and no server. Jev is a hosted
+API and CLM-8B needs a GPU server; to our knowledge no other typed-decision library puts its model in a
+Lambda. It is not a general-purpose endpoint: it is a small model embedded in a function that decides
+one precise thing on every event, with the questions fixed at build time, and it should be tuned on
+labeled examples of that thing (`autotune`: 0.557 zero-shot, 0.780 tuned on the Jev bench). `jul pack`
+ships only the model(s) the questions need. Step by step, with the AWS CLI or CDK:
+[docs/aws-lambda.md](https://github.com/usejul/jul/blob/main/docs/aws-lambda.md).
+
 ## Documentation
 
 - [Installation](https://github.com/usejul/jul/blob/main/docs/installation.md): backends, devices, batching, `jul setup`
 - [Models](https://github.com/usejul/jul/blob/main/docs/models.md): presets, the 18 models measured, `jul models add`
+- [AWS Lambda](https://github.com/usejul/jul/blob/main/docs/aws-lambda.md): a tuned decision in a Lambda function, step by step (CLI or CDK)
 - [Adapting to your data](https://github.com/usejul/jul/blob/main/docs/tuning.md): `Context`, `autotune(...)`, hybrid heads, `jul synth`
 - [Deployment](https://github.com/usejul/jul/blob/main/docs/deployment.md): `jul pack`, ONNX bundles, AWS Lambda
 - [Serving over HTTP](https://github.com/usejul/jul/blob/main/docs/serve.md): `jul serve`

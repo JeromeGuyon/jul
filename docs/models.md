@@ -107,6 +107,8 @@ question with a tuned head or a calibration from `autotune` keeps the vector rea
 and `method="vector"` or `method="cross"` forces one reading for a call.
 
 ```bash
+jul models add jul-decision-e5-small --repo usejul/jul-decision-e5-small-onnx --backend onnx   # cross/ attached
+# a cross model of your own: export it like any encoder, then attach it
 python -m jul.backends.onnx_export <cross model> models/cross-onnx --layers 11
 python -m jul.backends.onnx_export models/cross-onnx models/cross-onnx-w8 --int8 --embedding-bits 4   # 98 MB
 cp <cross model>/cross.json <cross model>/cross_heads.npz models/cross-onnx-w8/
@@ -136,21 +138,22 @@ is a second set of weights.
 needs the cross model alone, a bundle of Choice questions the vector model alone (`bundle.json`, `models`).
 On onnx, `JUL_ONNX_CROSS_MODEL` points the cross graph at S3 as `JUL_ONNX_MODEL` does the vector one.
 
-Measured with a cross model trained from `jul-decision-e5-small` (same size, 21 M parameters outside the
-embedding) on relational yes/no questions (paraphrase, inference, compositions, dates) plus single-text
-decisions, both ONNX 8-bit, on Kev's typed-decision questions it never trained on (`transfer-v9`
-development split, clean questions), M4 Pro:
+Measured on `jul-decision-e5-small` (its vectors and its cross model, both ONNX 8-bit, M4 Pro), on Kev's
+typed-decision questions it never trained on (`transfer-v9` development split, clean questions):
 
 | | Noul | Choice | Score | all | Noul p50 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `jul-decision-e5-small` | 0.582 | 0.385 | 0.275 | 0.452 | 19 ms |
-| with the cross model | **0.694** | 0.385 | **0.500** | **0.502** | **7 ms** |
+| vectors only | 0.579 | 0.401 | 0.275 | 0.460 | 19 ms |
+| with the cross model | **0.726** | 0.401 | **0.500** | **0.524** | **7 ms** |
 | Jev (published) | 0.847 | 0.833 | 0.950 | 0.854 | — |
 
-Paraphrase goes from 0.50 to 0.76, QNLI from 0.55 to 0.66, offensive posts from 0.725 to 0.775. What it
-does not do yet: sentences with the same words in another order ("the dog chased the cat") and date
-arithmetic written in a form it was not trained on stay unreliable, and knowledge questions (MMLU) do
-not move — that needs a larger model, not a different reading.
+Paraphrase goes from 0.50 to 0.79, QNLI from 0.55 to 0.70, offensive posts from 0.725 to 0.80. The cross
+model was trained on relational yes/no (paraphrase, inference, compositions, dates), single-text
+decisions and questions about the writer's tone: "is the customer angry?" gets 0.84–0.99 on angry
+support messages and 0.00–0.02 on calm ones. What it does not do well yet: urgency (no training data
+under a commercial license), hard but polite complaints read as offensive, sentences with the same words
+in another order, and knowledge questions (MMLU does not move — that needs a larger model, not another
+reading).
 
 ## Decision models
 

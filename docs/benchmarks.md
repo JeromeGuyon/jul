@@ -14,6 +14,7 @@ data at call time, and Jev receives none.
 | JuL `minicpm5-2b-decision` ¹   |     0.91 |      0.79 |     0.69 |     0.796 |     0.133 |    217 ms |         |
 | **Jev (published)**            |     0.91 |      0.87 |     0.48 |     0.753 |     0.156 |    246 ms |  hosted |
 | JuL `minicpm5-2b`              |     0.80 |      0.59 |     0.46 |     0.617 |     0.113 |     64 ms |  2.7 GB |
+| JuL `jul-decision-e5-small` ²  |     0.72 |      0.59 |     0.36 |     0.557 |     0.140 |  **4 ms** | 0.09 GB |
 | GLiNER2.5 (published)          |     0.70 |      0.61 |     0.44 |     0.583 |     0.101 |    128 ms |         |
 
 - **Nine `jul` models beat Jev zero-shot, the best by 12.4 points** (`wemm-4b`, 0.877 against
@@ -31,6 +32,7 @@ data at call time, and Jev receives none.
 | `harrier-0.6b` + autotune (1000 labeled)      |     0.91 |      0.71 |     0.83 |     0.814 |           | **13 ms** |
 | `minicpm5-2b` + autotune (1000 labeled)       |     0.92 |      0.76 |     0.59 |     0.757 |     0.102 |     38 ms |
 | `minicpm5-2b` + context (50 unlabeled)        |     0.84 |      0.62 |     0.47 |     0.643 |     0.140 |     44 ms |
+| `jul-decision-e5-small` + autotune, hybrid ²  |     0.92 |      0.88 |     0.54 |     0.780 |     0.088 |  **4 ms** |
 
 With a thousand labels, `wemm-4b-4bit` reaches **0.897** and 0.94 on Banking77, and `harrier-0.6b`
 passes Jev in 0.31 GB at 13 ms.
@@ -38,6 +40,12 @@ passes Jev in 0.31 GB at 13 ms.
 ¹ Trained on these three tasks' training splits (the benchmark rows come from the test splits); Jev's
 training data is not published. On six sources neither ever trained on, Jev leads, 0.857 against
 0.721: see [the development sets](#the-decision-model-on-the-development-sets). Measured on v1.0.
+
+² ONNX 8-bit, one-word reading (one pass per text), M4 Pro. Every question here is a Choice, read by its
+vectors; its cross model reads Noul and Score and does not play on this benchmark. On Kev's typed
+decisions (`transfer-v9` development split, clean questions, never trained on) the cross model takes
+yes/no from 0.579 to **0.726** and scores from 0.275 to 0.500 (all: 0.460 to 0.524; Jev 0.854). See
+[cross models](models.md#cross-models-reading-the-question-and-the-text-together).
 
 On anything that reads two things together (a paraphrase, a policy against a case), an embedding
 model falls behind the decision model: see [Embedding models](#embedding-models).

@@ -1,5 +1,6 @@
 """The cross reading (jul/cross.py): pairs, heads and routing, on a stub encoder (no model needed)."""
 
+import importlib.util
 import json
 
 import numpy as np
@@ -121,6 +122,10 @@ def test_default_method_routes_declared_types_unless_tuned(tmp_path):
 
 # --- on a real (tiny, random) encoder: client, pack and bundle ---------------------------------------
 
+HAS_EXPORT = all(importlib.util.find_spec(m) for m in ("torch", "onnx", "onnxscript", "onnxruntime"))
+needs_export = pytest.mark.skipif(not HAS_EXPORT, reason="needs torch, onnx, onnxscript, onnxruntime")
+
+
 @pytest.fixture
 def cross_setup(tiny_encoder, tmp_path, monkeypatch):
     """A vector preset on the tiny onnx encoder, and the same encoder with random heads as its cross model,
@@ -167,6 +172,7 @@ def answers(response):
             for n, a in response.answers.items()}
 
 
+@needs_export
 def test_the_cross_model_answers_its_types_and_the_bundle_matches(cross_setup, tmp_path):
     from jul.bundle import Bundle, pack
     client, _ = cross_setup
@@ -185,6 +191,7 @@ def test_the_cross_model_answers_its_types_and_the_bundle_matches(cross_setup, t
             assert np.allclose(got[name], want[name], atol=1e-4), (text, name)
 
 
+@needs_export
 def test_a_bundle_of_yes_no_and_scores_ships_the_cross_model_alone(cross_setup, tmp_path):
     from jul.bundle import Bundle, pack
     client, _ = cross_setup
@@ -197,6 +204,7 @@ def test_a_bundle_of_yes_no_and_scores_ships_the_cross_model_alone(cross_setup, 
             assert np.allclose(got[name], want[name], atol=1e-4)
 
 
+@needs_export
 def test_packing_as_vectors_ships_the_vector_model_alone(cross_setup, tmp_path):
     from jul.bundle import Bundle, pack
     client, _ = cross_setup
@@ -208,6 +216,7 @@ def test_packing_as_vectors_ships_the_vector_model_alone(cross_setup, tmp_path):
         assert np.allclose(got[name], want[name], atol=1e-4)
 
 
+@needs_export
 def test_each_model_reads_its_own_graph_override(cross_setup, monkeypatch):
     from jul import cross
     client, repo = cross_setup
@@ -220,6 +229,7 @@ def test_each_model_reads_its_own_graph_override(cross_setup, monkeypatch):
         cross.load(entry, "onnx")
 
 
+@needs_export
 def test_autotune_keeps_the_cross_model_unless_the_head_beats_it(cross_setup, monkeypatch):
     """The head is judged against the cross model's zero-shot answers; losing, it leaves the question to it."""
     import jul.tuning

@@ -17,13 +17,13 @@
 
 </div>
 
-JuL runs on your own hardware: a laptop, a server in your rack, a CPU-only container. Your text never
+JuL answers typed questions about a piece of text: pick an option, say yes or no, give a score. Each
+answer comes with a probability.
+
+It runs on your own hardware: a laptop, a server in your rack, a CPU-only container. Your text never
 goes to a third party and there is no per-call bill, so you can leave it running 24/7 on your own
 infrastructure. The model weights are downloaded once from the Hugging Face Hub, or loaded from a
 local path; after that, `HF_HUB_OFFLINE=1` keeps it off the network entirely.
-
-It answers typed questions about a piece of text: pick an option, say yes or no, give a score. Each
-answer comes with a probability.
 
 ## Why JuL
 
@@ -69,6 +69,8 @@ response.scores["frustration"].score      # 1.15
 
 The model compares your text with each option's *description*, so write descriptions a colleague
 would understand; the key is only the name you get back. `AsyncTypeSafeClient` has the same API.
+Arguments that only make sense for a remote API (`api_key`, `retry`, …) are accepted and ignored, so
+code written for Jev runs unchanged.
 From the shell, use `jul ask`. Non-Python callers can use `jul serve`, which speaks the Jev HTTP
 protocol ([docs/serve.md](https://github.com/usejul/jul/blob/main/docs/serve.md)).
 
@@ -116,7 +118,10 @@ To pick the backend yourself (`jul[mlx]`, `jul[torch]`, `jul[onnx]`), see
 
 ## How it works
 
-<img src="https://raw.githubusercontent.com/usejul/jul/main/docs/assets/how-it-works.svg" alt="The text and the option descriptions go through the same model; the answer is the closest option vector" width="760">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/usejul/jul/main/docs/assets/how-it-works-dark.svg">
+  <img src="https://raw.githubusercontent.com/usejul/jul/main/docs/assets/how-it-works.svg" alt="The text and the option descriptions go through the same model; the answer is the closest option vector" width="760">
+</picture>
 
 The model is stopped one step before it would start writing. JuL reads the hidden state it built for
 your text and compares it with the vectors of your option descriptions. Your task never reaches the
@@ -127,7 +132,10 @@ and keeps it only if it beats zero-shot in cross-validation
 
 ## Results
 
-<img src="https://raw.githubusercontent.com/usejul/jul/main/docs/assets/results.svg" alt="Mean accuracy on Jev's benchmark per model" width="760">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/usejul/jul/main/docs/assets/results-dark.svg">
+  <img src="https://raw.githubusercontent.com/usejul/jul/main/docs/assets/results.svg" alt="Mean accuracy on Jev's benchmark per model" width="760">
+</picture>
 
 Jev's published benchmark, 300 examples, zero-shot for every JuL model, run with
 `scripts/bench_jul.py`. Each mean is ±3 points. Banking77 and Emotion are in MTEB, which the

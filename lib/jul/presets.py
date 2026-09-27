@@ -70,7 +70,7 @@ class Preset:
     #: on these very weights (formulations, tau, center) plus `above_options`. None = no routing.
     routing: dict | None = field(default=None, compare=False, hash=False)
     #: A cross model that answers some question types instead of the vector reading (jul/cross.py):
-    #: {"repo": <directory or Hub repo, per backend as `repos` if a dict>}. None = vectors only.
+    #: {"repo": <directory or Hub repo, or {backend: repo}>, "subfolder": <optional>}. None = vectors only.
     cross: dict | None = field(default=None, compare=False, hash=False)
 
     @property

@@ -17,7 +17,8 @@ An encoder export (jul_onnx.json "architecture": "encoder", see jul/encoder.py) 
 and `attention_mask` and has no cache: the prefix runs again with each query, and a row is capped
 at the model's positions.
 
-`JUL_ONNX_MODEL` replaces the graph named in jul_onnx.json: a local path, or `s3://bucket/key`, read
+`JUL_ONNX_MODEL` replaces the graph named in jul_onnx.json (`JUL_ONNX_CROSS_MODEL` the graph of a
+preset's cross model, jul/cross.py): a local path, or `s3://bucket/key`, read
 into memory with boto3 (no local copy: a Lambda with SnapStart has 512 MB of /tmp). The graph must
 then be a single file, as the int8 export is.
 
@@ -137,7 +138,8 @@ class _Prefix:
 class ONNXBackbone(Backbone):
     backend = "onnx"
 
-    def __init__(self, name: str, backend: str | None = None, providers: list[str] | None = None):
+    def __init__(self, name: str, backend: str | None = None, providers: list[str] | None = None,
+                 graph_env: str = "JUL_ONNX_MODEL"):
         super().__init__(name)
         root = self.model_dir
         meta = json.loads((root / META).read_text())
@@ -147,7 +149,7 @@ class ONNXBackbone(Backbone):
         options.enable_cpu_mem_arena = False
         if os.environ.get("JUL_ONNX_THREADS"):
             options.intra_op_num_threads = int(os.environ["JUL_ONNX_THREADS"])
-        self.session = ort.InferenceSession(_graph(os.environ.get("JUL_ONNX_MODEL") or str(root / meta["file"])),
+        self.session = ort.InferenceSession(_graph(os.environ.get(graph_env) or str(root / meta["file"])),
                                             options, providers=providers or ["CPUExecutionProvider"])
         _LIVE.add(self)
         self._outputs = {int(o.name.removeprefix("layer_")): o.name for o in self.session.get_outputs()

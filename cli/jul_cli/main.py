@@ -199,12 +199,14 @@ def cmd_pack(a):
     questions = load_questions(a.questions)
     ctx = Context.load(a.context) if a.context else None
     client = TypeSafeClient(model=a.model, backend=a.backend, context=ctx)
-    path = pack(client, questions, a.out, context=ctx)
+    path = pack(client, questions, a.out, context=ctx, reading=a.reading)
     manifest = json.loads((path / MANIFEST).read_text())
     print(f"packed {len(questions)} question(s) on {manifest['preset']['name']} ({manifest['backend']}) "
-          f"into {path}: {len(manifest['prompts'])} prompt(s) per state")
+          f"into {path}: {len(manifest['prompts'])} prompt(s) per state; models to ship: "
+          + " + ".join(manifest["models"]))
     for q in manifest["questions"]:
-        how = (f"{q['head'].get('features', 'vector')} head" if q["head"] else
+        how = ("cross model" if q.get("reading") == "cross" else
+               f"{q['head'].get('features', 'vector')} head" if q["head"] else
                "calibrated zero-shot" if q["calibration"] else "zero-shot")
         print(f"  {q['name']}: {q['kind']}, {len(q['options'])} options, {how}")
     client.close()
@@ -259,14 +261,17 @@ def cmd_models(a):
     print("\nAdd a model: jul models add <name> --repo <hf repo> [--backend mlx|torch|onnx]")
 
 
-def _with_cross(preset, cross: str):
-    """The preset with a cross model for the question types its cross.json declares (jul/cross.py)."""
+def _with_cross(preset, cross):
+    """The preset with a cross model (a repo or directory, or a preset `cross` entry) for the question
+    types its cross.json declares (jul/cross.py)."""
     import dataclasses
 
     from jul.cross import CrossSpec, local_dir
-    spec = CrossSpec.load(local_dir(cross))
-    print(f"  cross model {cross}: reads {', '.join(spec.types)} (layer {spec.layer}, {spec.max_length} tokens)")
-    return dataclasses.replace(preset, cross={"repo": cross})
+    entry = cross if isinstance(cross, dict) else {"repo": cross}
+    spec = CrossSpec.load(local_dir(entry["repo"], entry.get("subfolder")))
+    where = entry["repo"] + (f"/{entry['subfolder']}" if entry.get("subfolder") else "")
+    print(f"  cross model {where}: reads {', '.join(spec.types)} (layer {spec.layer}, {spec.max_length} tokens)")
+    return dataclasses.replace(preset, cross=entry)
 
 
 def cmd_models_add(a):
@@ -347,9 +352,11 @@ def cmd_models_add(a):
                            n_dev=a.n_dev, n_generic=a.n_generic)
     except CalibrationError as exc:
         raise SystemExit(f"error: {exc}") from exc
-    if a.cross:
+    from jul import cross as cross_models
+    found = a.cross or (None if a.no_cross or not a.repo else cross_models.find(a.repo))
+    if found:
         from jul.presets import save_preset
-        preset = _with_cross(preset, a.cross)
+        preset = _with_cross(preset, found)
         save_preset(preset)
     c = preset.calibration
     print(f"\n{preset.name} on {c['backend']}: layers "
@@ -449,6 +456,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--context", help="context whose heads and calibration the bundle carries")
     s.add_argument("--model", **model_kw)
     s.add_argument("--backend", **backend_kw)
+    s.add_argument("--reading", choices=["auto", "vector"], default="auto",
+                   help="auto: the preset's cross model answers the types it declares (default); vector: every "
+                        "question as vectors, so the bundle needs the vector model only")
     s.set_defaults(fn=cmd_pack)
 
     s = sub.add_parser("synth", help="write a synthetic labeled dataset (for a later autotune)")
@@ -478,7 +488,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="add, decision model: option count above which it falls back to vectors; "
                         "0 disables the routing. Default: measured (or its decision.json, if it says)")
     s.add_argument("--cross", help="add: a cross model (directory or repo with a cross.json) that answers the "
-                                   "question types it declares; without --repo, attached to the fitted preset")
+                                   "question types it declares; without --repo, attached to the fitted preset. "
+                                   "A repo carrying one in cross/ gets it without this flag")
+    s.add_argument("--no-cross", action="store_true", help="add: ignore the cross model the repo carries")
     s.set_defaults(fn=cmd_models)
 
     s = sub.add_parser("serve", help="serve the Jev HTTP protocol (POST /v1/systemone) locally")

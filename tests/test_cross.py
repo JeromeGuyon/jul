@@ -117,3 +117,104 @@ def test_default_method_routes_declared_types_unless_tuned(tmp_path):
     ctx = Context()
     ctx.calibration[client._digest("noul", noul, options_of(noul))] = (1.0, [0.0, 0.0])
     assert client._default_method(Engine, ctx, "noul", noul, options_of(noul)) == "vector"
+
+
+# --- on a real (tiny, random) encoder: client, pack and bundle ---------------------------------------
+
+@pytest.fixture
+def cross_setup(tiny_encoder, tmp_path, monkeypatch):
+    """A vector preset on the tiny onnx encoder, and the same encoder with random heads as its cross model,
+    stored in the model repo's cross/ folder the way the published models carry it."""
+    import shutil
+
+    import jul.presets
+    from jul.cross import find
+    from jul.encoder import templates
+    from jul.presets import repo_fields, save_preset
+    hf_dir, onnx_dir = tiny_encoder
+    repo = tmp_path / "model"
+    shutil.copytree(onnx_dir, repo)
+    shutil.copytree(onnx_dir, repo / "cross")
+    rng = np.random.default_rng(0)
+    d = 32
+    np.savez(repo / "cross" / "cross_heads.npz",
+             **{f"{t}_weight": rng.normal(size=(n, d)).astype(np.float32) for t, n in (("noul", 3), ("choice", 1), ("score", 1))},
+             **{f"{t}_bias": rng.normal(size=n).astype(np.float32) for t, n in (("noul", 3), ("choice", 1), ("score", 1))})
+    (repo / "cross" / "cross.json").write_text(json.dumps(
+        {"method": "cross", "prefix": "query: ", "max_length": 64, "layer": 3, "separator": [2, 2],
+         "types": ["noul", "score"], "heads": "cross_heads.npz"}))
+    monkeypatch.setattr(jul.presets, "PRESET_HOME", tmp_path / "presets")
+    t = templates("query: ")
+    save_preset(Preset(name="tiny-cross", **repo_fields("onnx", str(repo)),
+                       formulations=(Formulation("one_word", t["one_word"], 3),
+                                     Formulation("question_options", t["question_options"], 3)),
+                       tau=0.05, latency_ms="?", quality="test", center="options", backend="onnx",
+                       cross=find(str(repo))), tmp_path / "presets")
+    from jul import TypeSafeClient
+    client = TypeSafeClient(model="tiny-cross", backend="onnx", context_home=tmp_path / "contexts")
+    yield client, repo
+    client.close()
+
+
+MIXED = {"team": Choice("Which team?", {"billing": "payments", "tech": "bugs"}),
+         "urgent": Noul("Is it urgent?"),
+         "anger": Score("How angry is the customer?", ["calm", "annoyed", "furious"])}
+TEXTS = ["I was charged twice", "the app crashes on export", "refund me now or I leave"]
+
+
+def answers(response):
+    return {n: np.array(list(a.probabilities.values())) if hasattr(a, "probabilities") else np.array([a.noul])
+            for n, a in response.answers.items()}
+
+
+def test_the_cross_model_answers_its_types_and_the_bundle_matches(cross_setup, tmp_path):
+    from jul.bundle import Bundle, pack
+    client, _ = cross_setup
+    engine = client._engine_for(None)
+    assert engine.cross is not None and engine.cross.spec.types == ("noul", "score")
+    vector = client.system_one(state=TEXTS[0], questions=MIXED, method="vector")
+    crossed = client.system_one(state=TEXTS[0], questions=MIXED)
+    assert np.allclose(answers(vector)["team"], answers(crossed)["team"])          # Choice stays on vectors
+    assert not np.allclose(answers(vector)["urgent"], answers(crossed)["urgent"])  # Noul goes to the cross model
+    bundle = Bundle.load(pack(client, MIXED, tmp_path / "bundle"))
+    assert bundle.models == ["vector", "cross"]
+    for text in TEXTS:
+        want, got = answers(client.system_one(state=text, questions=MIXED)), answers(bundle.system_one(text))
+        assert list(got) == list(MIXED)
+        for name in MIXED:
+            assert np.allclose(got[name], want[name], atol=1e-4), (text, name)
+
+
+def test_a_bundle_of_yes_no_and_scores_ships_the_cross_model_alone(cross_setup, tmp_path):
+    from jul.bundle import Bundle, pack
+    client, _ = cross_setup
+    questions = {k: MIXED[k] for k in ("urgent", "anger")}
+    bundle = Bundle.load(pack(client, questions, tmp_path / "bundle"))
+    assert bundle.models == ["cross"] and bundle.backbone is None
+    for text in TEXTS:
+        want, got = answers(client.system_one(state=text, questions=questions)), answers(bundle.system_one(text))
+        for name in questions:
+            assert np.allclose(got[name], want[name], atol=1e-4)
+
+
+def test_packing_as_vectors_ships_the_vector_model_alone(cross_setup, tmp_path):
+    from jul.bundle import Bundle, pack
+    client, _ = cross_setup
+    bundle = Bundle.load(pack(client, MIXED, tmp_path / "bundle", reading="vector"))
+    assert bundle.models == ["vector"] and bundle.cross is None
+    want = answers(client.system_one(state=TEXTS[1], questions=MIXED, method="vector"))
+    got = answers(bundle.system_one(TEXTS[1]))
+    for name in MIXED:
+        assert np.allclose(got[name], want[name], atol=1e-4)
+
+
+def test_each_model_reads_its_own_graph_override(cross_setup, monkeypatch):
+    from jul import cross
+    client, repo = cross_setup
+    entry = {"repo": str(repo), "subfolder": "cross"}
+    monkeypatch.setenv("JUL_ONNX_MODEL", str(repo / "missing.onnx"))       # the vector model's, not the cross one's
+    assert cross.load(entry, "onnx").spec.types == ("noul", "score")
+    monkeypatch.delenv("JUL_ONNX_MODEL")
+    monkeypatch.setenv("JUL_ONNX_CROSS_MODEL", str(repo / "missing.onnx"))
+    with pytest.raises(Exception):
+        cross.load(entry, "onnx")

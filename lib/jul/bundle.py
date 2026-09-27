@@ -20,6 +20,12 @@ torch bf16 is ~0.95 cosine). Pack on the backend you deploy on, or on one whose 
 
 A bundle holds no weights: it names the model (preset and repo) and is loaded on it, wherever that
 runs. Nothing here trains or changes a model.
+
+With a cross model in the preset (jul/cross.py), each question is packed with the reading the client
+would give it: the types the cross model declares go to it, unless the question has a tuned head or a
+calibration. `bundle.json` then lists which models the bundle needs (`models`: "vector", "cross"), and
+`Bundle.load` loads those only: a bundle of Noul and Score questions never loads the vector model, so a
+deployment ships the cross model alone. `reading="vector"` packs every question as vectors (one model).
 """
 
 from __future__ import annotations
@@ -40,6 +46,8 @@ from .presets import Preset
 from .types import Option, SystemOneResponse, Usage, serialize_state
 
 FORMAT = 1
+#: How a question can be packed: `pack(reading=...)`.
+READINGS = ("auto", "vector")
 MANIFEST = "bundle.json"
 ARRAYS = "arrays.npz"
 
@@ -60,11 +68,17 @@ class _Question:
     passes: list[_Pass]
     head: dict | None
     calibration: tuple[float, np.ndarray] | None
+    reading: str = "vector"
+    instructions: str = ""
 
 
-def pack(client, questions: dict, out: str | Path, context=None, model: str | None = None) -> Path:
+def pack(client, questions: dict, out: str | Path, context=None, model: str | None = None,
+         reading: str = "auto") -> Path:
     """Freeze `questions` as `client` answers them (its preset and backend, `context`'s heads and
-    calibration) into the directory `out`."""
+    calibration) into the directory `out`. `reading="vector"` reads every question as vectors, even the
+    ones the preset's cross model would answer."""
+    if reading not in READINGS:
+        raise ValueError(f"reading must be one of {READINGS}, not {reading!r}")
     from .client import _kind_of
     from .context import resolve_context
     from .types import options_of
@@ -81,6 +95,12 @@ def pack(client, questions: dict, out: str | Path, context=None, model: str | No
     for name, question in questions.items():
         kind = _kind_of(question)
         options = options_of(question)
+        if reading == "auto" and client._default_method(engine, ctx, kind, question, options) == "cross":
+            manifest_questions.append({
+                "name": name, "kind": kind, "instructions": question.instructions,
+                "options": [{"key": o.key, "description": o.description} for o in options],
+                "reading": "cross", "passes": [], "head": None, "calibration": None})
+            continue
         head = client._head(ctx, kind, question, options)
         # a tuned head is read with the formulations it was trained on
         compiled = engine.compile(kind, question.instructions, options, ctx, client._head_formulations(head))
@@ -101,11 +121,13 @@ def pack(client, questions: dict, out: str | Path, context=None, model: str | No
         manifest_questions.append({
             "name": name, "kind": kind, "instructions": question.instructions,
             "options": [{"key": o.key, "description": o.description} for o in options],
-            "passes": passes, "head": head["meta"] if head is not None else None,
+            "reading": "vector", "passes": passes, "head": head["meta"] if head is not None else None,
             "calibration": [float(fitted[0]), list(map(float, fitted[1]))] if fitted else None,
         })
     preset: Preset = engine.preset
+    readings = {q["reading"] for q in manifest_questions}
     manifest = {"format": FORMAT, "preset": preset.to_json(), "backend": engine.backbone.backend,
+                "models": [m for m in ("vector", "cross") if m in readings],
                 "model_key": engine.backbone.key, "repo": engine.backbone.repo, "tau": preset.tau,
                 "prompts": [{"prefix": a, "suffix": b} for a, b in prompts], "questions": manifest_questions,
                 "context": getattr(ctx, "name", None), "packed": time.strftime("%Y-%m-%d")}
@@ -117,11 +139,13 @@ def pack(client, questions: dict, out: str | Path, context=None, model: str | No
 class Bundle:
     """A bundle loaded on a backbone. See the module docstring."""
 
-    def __init__(self, manifest: dict, arrays: dict, backbone: Backbone):
+    def __init__(self, manifest: dict, arrays: dict, backbone: Backbone | None, cross=None):
         self.manifest = manifest
         self.backbone = backbone
+        self.cross = cross
         self.tau = float(manifest["tau"])
-        self.prompts = [PromptTemplate(backbone, p["prefix"], p["suffix"]) for p in manifest["prompts"]]
+        self.prompts = ([PromptTemplate(backbone, p["prefix"], p["suffix"]) for p in manifest["prompts"]]
+                        if backbone is not None else [])
         self.questions: list[_Question] = []
         for q in manifest["questions"]:
             name = q["name"]
@@ -135,13 +159,16 @@ class Bundle:
                 passes=[_Pass(p["prompt"], p["layer"], arrays[f"{name}.{i}.options"], arrays[f"{name}.{i}.center"])
                         for i, p in enumerate(q["passes"])],
                 head=head,
-                calibration=(q["calibration"][0], np.array(q["calibration"][1])) if q["calibration"] else None))
+                calibration=(q["calibration"][0], np.array(q["calibration"][1])) if q["calibration"] else None,
+                reading=q.get("reading", "vector"), instructions=q["instructions"]))
         # (prompt, layer) pairs read per state, each once whatever the number of questions using it
         self._reads = sorted({(p.prompt, p.layer) for q in self.questions for p in q.passes})
 
     @classmethod
-    def load(cls, path: str | Path, backend: str | None = None, model: str | None = None) -> "Bundle":
-        """`model` replaces the repo or directory of the weights the bundle names (same weights, moved)."""
+    def load(cls, path: str | Path, backend: str | None = None, model: str | None = None,
+             cross_model: str | None = None) -> "Bundle":
+        """`model` replaces the repo or directory of the weights the bundle names (same weights, moved),
+        `cross_model` the directory of its cross model. Only the models the bundle needs are loaded."""
         from .backbone import MODELS, resolve_backend
         path = Path(path)
         manifest = json.loads((path / MANIFEST).read_text())
@@ -156,11 +183,22 @@ class Bundle:
         MODELS[name] = {**MODELS.get(name, {}), backend: repo}
         with np.load(path / ARRAYS) as z:
             arrays = {k: z[k] for k in z.files}
-        return cls(manifest, arrays, Backbone(name, backend))
+        models = manifest.get("models", ["vector"])
+        cross = None
+        if "cross" in models:
+            from . import cross as cross_model_
+            spec = {"repo": cross_model, "subfolder": None} if cross_model else manifest["preset"]["cross"]
+            cross = cross_model_.load(spec, backend)
+        return cls(manifest, arrays, Backbone(name, backend) if "vector" in models else None, cross)
 
     @property
     def question_names(self) -> list[str]:
         return [q.name for q in self.questions]
+
+    @property
+    def models(self) -> list[str]:
+        """The models this bundle reads with ("vector", "cross")."""
+        return self.manifest.get("models", ["vector"])
 
     def _vectors(self, texts: list[str]) -> dict[tuple[int, int], np.ndarray]:
         """(prompt, layer) -> (n, d) last-token vectors of every text."""
@@ -186,11 +224,18 @@ class Bundle:
         texts = [serialize_state(s) for s in states]
         vectors = self._vectors(texts)
         answers = [{} for _ in texts]
-        for q in self.questions:
-            for row, probabilities in zip(answers, self._probabilities(q, vectors, texts)):
-                row[q.name] = _format(q.kind, None, q.options, probabilities)
         tokens = [sum(len(self.backbone.encode(t + self.prompts[p].suffix_text)) for p in {p for p, _ in self._reads})
                   for t in texts]
+        for q in self.questions:
+            if q.reading == "cross":
+                for i, (row, state) in enumerate(zip(answers, states)):
+                    logits, spent = self.cross.logits(state, q.kind, q.instructions, q.options)
+                    row[q.name] = _format(q.kind, None, q.options, softmax(logits))
+                    tokens[i] += spent
+                continue
+            for row, probabilities in zip(answers, self._probabilities(q, vectors, texts)):
+                row[q.name] = _format(q.kind, None, q.options, probabilities)
+        answers = [{q.name: a[q.name] for q in self.questions} for a in answers]   # the packed order
         return [SystemOneResponse(answers=a, model=self.manifest["preset"]["name"], usage=Usage(input_tokens=n),
                                   request_id=str(uuid.uuid4())) for a, n in zip(answers, tokens)]
 

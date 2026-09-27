@@ -23,8 +23,10 @@ torch, `jul.backends.onnx_export` for onnx), its tokenizer, and `cross.json`:
 </s></s>; BERT: [SEP]); `write_spec` reads it from the tokenizer.
 
 `heads` holds `noul_weight` (3, d), `noul_bias` (3,), `choice_weight` (1, d), `choice_bias` (1,),
-`score_weight` (1, d), `score_bias` (1,). A preset points to it with `cross: {"repo": ...}`; the
-vector model keeps answering everything else. The pair is cut to `max_length` tokens the way the
+`score_weight` (1, d), `score_bias` (1,). A preset points to it with `cross: {"repo": ..., "subfolder": ...}`
+(a model repo can carry its cross model in `cross/`, which `jul models add` attaches by itself); the
+vector model keeps answering everything else. On onnx, `JUL_ONNX_CROSS_MODEL` replaces the cross graph as
+`JUL_ONNX_MODEL` replaces the vector one (a local path or `s3://bucket/key`). The pair is cut to `max_length` tokens the way the
 model was trained (longest_first: a token off the longer side, until it fits).
 """
 
@@ -68,11 +70,47 @@ class CrossSpec:
                    heads_file=d.get("heads", "cross_heads.npz"), directory=directory)
 
 
-def local_dir(repo: str) -> Path:
+SUBFOLDER = "cross"
+GRAPH_ENV = "JUL_ONNX_CROSS_MODEL"
+
+
+def local_dir(repo: str, subfolder: str | None = None) -> Path:
+    """The cross model's directory: `repo` itself or its `subfolder`, downloaded (that part only) for a Hub repo."""
     if Path(repo).is_dir():
-        return Path(repo)
+        return Path(repo) / subfolder if subfolder else Path(repo)
     from huggingface_hub import snapshot_download
-    return Path(snapshot_download(repo))
+    root = Path(snapshot_download(repo, allow_patterns=[f"{subfolder}/*"] if subfolder else None))
+    return root / subfolder if subfolder else root
+
+
+def find(repo: str) -> dict | None:
+    """A preset's `cross` entry for the cross model a model repo carries in `cross/`, or None."""
+    if Path(repo).is_dir():
+        return ({"repo": str(Path(repo).resolve()), "subfolder": SUBFOLDER}
+                if (Path(repo) / SUBFOLDER / SPEC_FILE).is_file() else None)
+    try:
+        from huggingface_hub import hf_hub_download
+        hf_hub_download(repo, f"{SUBFOLDER}/{SPEC_FILE}")
+    except Exception:
+        return None
+    return {"repo": repo, "subfolder": SUBFOLDER}
+
+
+def location(cross: dict, backend: str) -> Path:
+    """The directory a preset's `cross` entry names for `backend` (`repo` may be a {backend: repo} dict)."""
+    repo = cross["repo"]
+    repo = repo.get(backend) if isinstance(repo, dict) else repo
+    if not repo:
+        raise ValueError(f"the cross model has no {backend} repo")
+    return local_dir(repo, cross.get("subfolder"))
+
+
+def load(cross: dict, backend: str) -> "CrossReader":
+    """The reader of a preset's `cross` entry, its encoder loaded on `backend`."""
+    from .backbone import Backbone
+    directory = location(cross, backend)
+    backbone = Backbone(str(directory), backend, **({"graph_env": GRAPH_ENV} if backend == "onnx" else {}))
+    return CrossReader(backbone, CrossSpec.load(directory))
 
 
 def cut(a: list[int], b: list[int], budget: int) -> tuple[list[int], list[int]]:

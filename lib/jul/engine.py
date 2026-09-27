@@ -116,12 +116,8 @@ class Engine:
             self.pointer = PointerReader(backbone, DecisionSpec.load(backbone.model_dir))
         self.cross = None
         if preset.cross:
-            from .cross import CrossReader, CrossSpec
-            repo = preset.cross["repo"]
-            repo = repo.get(backbone.backend) if isinstance(repo, dict) else repo
-            if repo:
-                cross_backbone = Backbone(repo, backbone.backend)
-                self.cross = CrossReader(cross_backbone, CrossSpec.load(cross_backbone.model_dir))
+            from . import cross
+            self.cross = cross.load(preset.cross, backbone.backend)
         self._questions: OrderedDict[tuple, CompiledQuestion] = OrderedDict()
         self._max_cached = max_cached_questions
         self._one_word_templates: dict[str, PromptTemplate] = {}

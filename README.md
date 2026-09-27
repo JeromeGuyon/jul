@@ -61,33 +61,33 @@ protocol ([docs/serve.md](https://github.com/usejul/jul/blob/main/docs/serve.md)
 
 ## Showcases
 
-Eight demos from [jul-showcases](https://github.com/guyon-it-consulting/jul-showcases), each an idea
+Eight demos from [jul-showcases](https://github.com/usejul/jul-showcases), each an idea
 from [jevable.com](https://jevable.com/) running entirely on device, for $0.
 
 <table>
 <tr>
 <td width="50%" valign="top">
 <img src="https://raw.githubusercontent.com/usejul/jul/main/docs/assets/showcase-sncf.gif" alt="A browser agent booking a Lyon to Toulouse train on SNCF Connect"><br>
-<b><a href="https://github.com/guyon-it-consulting/jul-showcases/tree/main/browser-agent">A browser agent on SNCF Connect</a>.</b> JuL picks each action from the page's accessibility tree
+<b><a href="https://github.com/usejul/jul-showcases/tree/main/browser-agent">A browser agent on SNCF Connect</a>.</b> JuL picks each action from the page's accessibility tree
 and the Apple Foundation Model types the city names. Six steps from the homepage to priced
 results, about 130 ms per decision.
 </td>
 <td width="50%" valign="top">
 <img src="https://raw.githubusercontent.com/usejul/jul/main/docs/assets/showcase-qa.gif" alt="JuL running a plain-language QA ticket on vistaprint.com"><br>
-<b><a href="https://github.com/guyon-it-consulting/jul-showcases/tree/main/qa-browser">QA written by the product manager</a>.</b> The test is a ticket in plain French or English. JuL
+<b><a href="https://github.com/usejul/jul-showcases/tree/main/qa-browser">QA written by the product manager</a>.</b> The test is a ticket in plain French or English. JuL
 runs it in a real browser and checks each acceptance criterion. Played here at 3× speed.
 </td>
 </tr>
 </table>
 
-- [Browser agent](https://github.com/guyon-it-consulting/jul-showcases/tree/main/browser-agent): books a train on SNCF Connect from its accessibility tree.
-- [QA from the ticket](https://github.com/guyon-it-consulting/jul-showcases/tree/main/qa-browser): runs a plain-language acceptance test in a real browser.
-- [Ticket triage at scale](https://github.com/guyon-it-consulting/jul-showcases/tree/main/ticket-triage-scale): 50,000 real support tickets in 668 s, $0.
-- [Ticket triage with autotune](https://github.com/guyon-it-consulting/jul-showcases/tree/main/ticket-triage-autoscale): a fast model goes from 82.0% to 96.5% with a head trained in 6.2 s.
-- [Self-branching form](https://github.com/guyon-it-consulting/jul-showcases/tree/main/julform): picks the next question from the answers so far.
-- [Intent re-ranker](https://github.com/guyon-it-consulting/jul-showcases/tree/main/intent-reranker): sorts a list by a plain-language intent.
-- [Notification triage](https://github.com/guyon-it-consulting/jul-showcases/tree/main/notification-triage): mutes marketing, keeps OTPs and appointments.
-- [Prompt difficulty](https://github.com/guyon-it-consulting/jul-showcases/tree/main/prompt-difficulty): routes a prompt to fast mode or the full model before it is sent.
+- [Browser agent](https://github.com/usejul/jul-showcases/tree/main/browser-agent): books a train on SNCF Connect from its accessibility tree.
+- [QA from the ticket](https://github.com/usejul/jul-showcases/tree/main/qa-browser): runs a plain-language acceptance test in a real browser.
+- [Ticket triage at scale](https://github.com/usejul/jul-showcases/tree/main/ticket-triage-scale): 50,000 real support tickets in 668 s, $0.
+- [Ticket triage with autotune](https://github.com/usejul/jul-showcases/tree/main/ticket-triage-autoscale): a fast model goes from 82.0% to 96.5% with a head trained in 6.2 s.
+- [Self-branching form](https://github.com/usejul/jul-showcases/tree/main/julform): picks the next question from the answers so far.
+- [Intent re-ranker](https://github.com/usejul/jul-showcases/tree/main/intent-reranker): sorts a list by a plain-language intent.
+- [Notification triage](https://github.com/usejul/jul-showcases/tree/main/notification-triage): mutes marketing, keeps OTPs and appointments.
+- [Prompt difficulty](https://github.com/usejul/jul-showcases/tree/main/prompt-difficulty): routes a prompt to fast mode or the full model before it is sent.
 
 ## Install
 

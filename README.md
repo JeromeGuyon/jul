@@ -100,7 +100,7 @@ city names (macOS 26). Six steps from the homepage to priced results, about 130 
 <img src="https://raw.githubusercontent.com/usejul/jul/d1f0d236aed437d57b625d36c3841f2d156ee637/docs/assets/showcase-triage.svg" alt="Terminal output: 50,000 support tickets triaged in 668 s at 82.9% accuracy for $0"><br>
 <b><a href="https://github.com/usejul/jul-showcases/tree/main/ticket-triage-scale">Ticket triage at scale</a>.</b>
 50,000 real support tickets routed in 668 s, 82.9% accurate, for $0, with the small
-`qwen3-embedding-0.6b` on an Apple Silicon Mac. At
+<code>qwen3-embedding-0.6b</code> on an Apple Silicon Mac. At
 that rate a million take about 3.7 hours.
 </td>
 </tr>

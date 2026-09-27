@@ -116,6 +116,26 @@ jul models add jul-decision-e5-small --backend onnx --cross models/cross-onnx-w8
 `cross.json` holds the input prefix, the length the pairs are cut to (as in training), the layer, the
 separator between the two segments and the types; `jul.cross.write_spec` writes it from a trained model.
 
+Which reading answers what:
+
+| | no labeled examples | labeled examples (`autotune`) |
+| --- | --- | --- |
+| `Choice` | vectors | a head on the vectors |
+| `Noul`, `Score` | the cross model | the cross model, unless a head on the vectors beats it on those examples |
+
+`autotune` judges a head for a Noul or Score against the cross model's zero-shot answers on the same
+examples, not against the vectors' (which are weaker there): if the head wins, the question is answered
+by it; otherwise it stays with the cross model. Choice stays on vectors because they carry to labels the
+models never saw — read through a cross model trained on the same data, tool routing went from 0.54 to
+0.76 and classification from 0.82 to 0.86, but the zero-shot Jev bench fell from 0.557 to 0.460
+(Banking77, 77 intents, 0.59 to 0.35) — and because a vector reading is what heads are trained on. Its
+own vectors do not survive the cross training (0.61 to 0.39 on the dev sets), which is why the cross model
+is a second set of weights.
+
+`jul pack` ships only what its questions need: a bundle of Noul and Score questions (with no tuned head)
+needs the cross model alone, a bundle of Choice questions the vector model alone (`bundle.json`, `models`).
+On onnx, `JUL_ONNX_CROSS_MODEL` points the cross graph at S3 as `JUL_ONNX_MODEL` does the vector one.
+
 Measured with a cross model trained from `jul-decision-e5-small` (same size, 21 M parameters outside the
 embedding) on relational yes/no questions (paraphrase, inference, compositions, dates) plus single-text
 decisions, both ONNX 8-bit, on Kev's typed-decision questions it never trained on (`transfer-v9`

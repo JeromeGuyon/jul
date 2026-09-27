@@ -218,3 +218,43 @@ def test_each_model_reads_its_own_graph_override(cross_setup, monkeypatch):
     monkeypatch.setenv("JUL_ONNX_CROSS_MODEL", str(repo / "missing.onnx"))
     with pytest.raises(Exception):
         cross.load(entry, "onnx")
+
+
+def test_autotune_keeps_the_cross_model_unless_the_head_beats_it(cross_setup, monkeypatch):
+    """The head is judged against the cross model's zero-shot answers; losing, it leaves the question to it."""
+    import jul.tuning
+    from jul.context import Context
+    client, _ = cross_setup
+    q = {"urgent": Noul("Is it urgent?")}
+    labeled = [(t, {"urgent": i % 2 == 0}) for i, t in enumerate(TEXTS * 4)]
+    engine = client._engine_for(None)
+    seen = {}
+    real_train = jul.tuning.train
+
+    def judged(features, y, zero_shot_scores, *args, **kwargs):
+        seen["baseline"] = zero_shot_scores
+        return real_train(features, y, zero_shot_scores, *args, **kwargs)
+
+    monkeypatch.setattr(jul.tuning, "train", judged)
+    ctx = Context()
+    client.autotune(ctx, q, labeled, save=False)
+    want = np.stack([engine.cross.logits(t, "noul", "Is it urgent?", options_of(q["urgent"]))[0] for t, _ in labeled])
+    assert np.allclose(seen["baseline"], want)                    # judged against the cross model
+    digest = client._digest("noul", q["urgent"], options_of(q["urgent"]))
+    assert digest not in ctx.calibration                           # no vector calibration to take it over
+
+    def losing(*args, **kwargs):
+        return None, jul.tuning.TuningReport("urgent", 12, 12, 2, 0.9, 0.5, False, "does not beat zero-shot")
+    monkeypatch.setattr(jul.tuning, "train", losing)
+    ctx = Context()
+    report = client.autotune(ctx, q, labeled, save=False)["urgent"]
+    assert "cross model, which keeps the question" in report.reason
+    assert client._default_method(engine, ctx, "noul", q["urgent"], options_of(q["urgent"])) == "cross"
+
+    def winning(features, y, *args, **kwargs):
+        head = {"W": np.zeros((features.shape[1], 2)), "b": np.zeros(2), "meta": {"features": "vector"}}
+        return head, jul.tuning.TuningReport("urgent", 12, 12, 2, 0.5, 0.9, True, "beats zero-shot")
+    monkeypatch.setattr(jul.tuning, "train", winning)
+    ctx = Context()
+    client.autotune(ctx, q, labeled, save=False)
+    assert client._default_method(engine, ctx, "noul", q["urgent"], options_of(q["urgent"])) == "vector"

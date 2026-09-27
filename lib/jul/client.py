@@ -232,6 +232,8 @@ class TypeSafeClient:
         `labeled` is a list of `(state, {question_name: answer})`. An answer is the option key for a
         Choice, True/False for a Noul, the level index for a Score. Returns one report per question;
         a head that does not beat the zero-shot method on held-out examples is not activated.
+        With a cross model in the preset, a question of a type it reads keeps it unless the head beats
+        it on these examples (the head then answers, on the vectors).
         `features` is what the head reads: "vector" (the model's vectors), "lexical" (TF-IDF of the
         text) or "hybrid" (both); see jul/tuning.py. `formulations` picks the prompts the head reads,
         by name ("one_word", "question_options", "question"), for every question (a list) or per
@@ -266,9 +268,19 @@ class TypeSafeClient:
             y = np.array([label for _, label in rows])
 
             digest = self._digest(kind, question, options)
-            head, report = tuning.train(features, y, scores, keys, name, self._preset.name,
+            # A type the cross model reads is answered by it until a head does better: the head is judged
+            # against the cross model's zero-shot answers on these very examples, and no vector calibration
+            # is kept (it would take the question off the cross model).
+            crossed = engine.cross is not None and engine.cross.handles(kind)
+            baseline = (np.stack([engine.cross.logits(labeled[i][0], kind, question.instructions, options)[0]
+                                  for i, _ in rows]) if crossed else scores)
+            head, report = tuning.train(features, y, baseline, keys, name, self._preset.name,
                                         texts=[states[i] for i, _ in rows], mode=features_mode)
-            ctx.calibration[digest] = fit_temperature_bias(scores / self._preset.tau, y)
+            if crossed:
+                ctx.calibration.pop(digest, None)
+                report.reason += "; zero-shot here is the cross model" + ("" if head else ", which keeps the question")
+            else:
+                ctx.calibration[digest] = fit_temperature_bias(scores / self._preset.tau, y)
             if head is not None:
                 head["meta"]["formulations"] = [f.name for f in chosen] if chosen else None
                 ctx.heads[digest] = head

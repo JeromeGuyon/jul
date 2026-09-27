@@ -259,10 +259,32 @@ def cmd_models(a):
     print("\nAdd a model: jul models add <name> --repo <hf repo> [--backend mlx|torch|onnx]")
 
 
+def _with_cross(preset, cross: str):
+    """The preset with a cross model for the question types its cross.json declares (jul/cross.py)."""
+    import dataclasses
+
+    from jul.cross import CrossSpec, local_dir
+    spec = CrossSpec.load(local_dir(cross))
+    print(f"  cross model {cross}: reads {', '.join(spec.types)} (layer {spec.layer}, {spec.max_length} tokens)")
+    return dataclasses.replace(preset, cross={"repo": cross})
+
+
 def cmd_models_add(a):
     from jul.calibrate import CalibrationError, calibrate
     if not a.name:
         raise SystemExit("models add needs a name")
+    if a.cross and not a.repo:
+        # attach a cross model to a preset already fitted: nothing to refit
+        from jul.backbone import resolve_backend
+        from jul.presets import resolve, save_preset
+        backend = resolve_backend(a.backend)
+        try:
+            preset = resolve(a.name, backend)
+        except ValueError as exc:
+            raise SystemExit(f"error: {exc}") from exc
+        path = save_preset(_with_cross(preset, a.cross))
+        print(f"{a.name} on {backend}: cross model attached -> {path}")
+        return
     from jul.decision import spec_source
     source = spec_source(a.repo) if a.repo else None
     if source:
@@ -325,6 +347,10 @@ def cmd_models_add(a):
                            n_dev=a.n_dev, n_generic=a.n_generic)
     except CalibrationError as exc:
         raise SystemExit(f"error: {exc}") from exc
+    if a.cross:
+        from jul.presets import save_preset
+        preset = _with_cross(preset, a.cross)
+        save_preset(preset)
     c = preset.calibration
     print(f"\n{preset.name} on {c['backend']}: layers "
           + ", ".join(f"{f.name}@{f.layer}" for f in preset.formulations)
@@ -381,7 +407,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--model", **model_kw)
     s.add_argument("--backend", **backend_kw)
     s.add_argument("--context", help="name of a saved context")
-    s.add_argument("--method", choices=["vector", "letters"])
+    s.add_argument("--method", choices=["vector", "letters", "cross"])
     s.set_defaults(fn=cmd_ask)
 
     s = sub.add_parser("run", help="answer a question file over a JSONL input")
@@ -391,7 +417,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--model", **model_kw)
     s.add_argument("--backend", **backend_kw)
     s.add_argument("--context")
-    s.add_argument("--method", choices=["vector", "letters"])
+    s.add_argument("--method", choices=["vector", "letters", "cross"])
     s.set_defaults(fn=cmd_run)
 
     s = sub.add_parser("context", help="create, list, show or delete a saved context")
@@ -451,6 +477,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--route-above", type=int,
                    help="add, decision model: option count above which it falls back to vectors; "
                         "0 disables the routing. Default: measured (or its decision.json, if it says)")
+    s.add_argument("--cross", help="add: a cross model (directory or repo with a cross.json) that answers the "
+                                   "question types it declares; without --repo, attached to the fitted preset")
     s.set_defaults(fn=cmd_models)
 
     s = sub.add_parser("serve", help="serve the Jev HTTP protocol (POST /v1/systemone) locally")

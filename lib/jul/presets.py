@@ -69,6 +69,9 @@ class Preset:
     #: On a pointer preset: the vector reading a long question falls back to, fitted by `jul models add`
     #: on these very weights (formulations, tau, center) plus `above_options`. None = no routing.
     routing: dict | None = field(default=None, compare=False, hash=False)
+    #: A cross model that answers some question types instead of the vector reading (jul/cross.py):
+    #: {"repo": <directory or Hub repo, per backend as `repos` if a dict>}. None = vectors only.
+    cross: dict | None = field(default=None, compare=False, hash=False)
 
     @property
     def layers(self) -> list[int]:
@@ -98,7 +101,8 @@ class Preset:
                 "tau": self.tau, "center": self.center,
                 "one_word": list(self.one_word) if self.one_word else None,
                 "latency_ms": self.latency_ms, "quality": self.quality, "notes": self.notes,
-                "calibration": self.calibration, "method": self.method, "routing": self.routing}
+                "calibration": self.calibration, "method": self.method, "routing": self.routing,
+                **({"cross": self.cross} if self.cross else {})}
 
     @classmethod
     def from_json(cls, d: dict, asset_dir: Path) -> "Preset":
@@ -111,7 +115,7 @@ class Preset:
                    latency_ms=d.get("latency_ms", "?"), quality=d.get("quality", ""),
                    notes=d.get("notes", ""), backend=d.get("backend"), asset_dir=asset_dir,
                    calibration=d.get("calibration"), method=d.get("method", "vector"),
-                   routing=d.get("routing"))
+                   routing=d.get("routing"), cross=d.get("cross"))
 
 
 def formulations_for(preset: Preset, names) -> tuple[Formulation, ...]:

@@ -86,6 +86,52 @@ and 17 ms on a 1,769 MB AWS Lambda ($0.59 per million calls, cold start 2.4 s). 
 calibration dev sets, it scored 0.590 against 0.475 for Harrier 0.6B. The heads carry it: alone,
 zero-shot, a small encoder is no match for a 4B embedding model.
 
+## Cross models: reading the question and the text together
+
+The vector reading encodes the text and each option apart: the model never sees both at once. That is
+what makes it fast and cacheable, and also why a question about how two things relate — is this a
+paraphrase of that sentence, does it follow that…, does the request mention a place and not a date — is
+answered near chance by an embedding model of any size. A *cross model* is a second small encoder,
+fine-tuned on pairs: `<s> query: question </s></s> text </s>` goes through it once, and the mean of its
+last layer feeds a head chosen by the question type (`lib/jul/cross.py`):
+
+- `Noul`: one pass, three logits (yes, no, unknown); `noul = p(yes) + p(unknown) / 2`. Its own descriptions
+  of true and false, when given, are appended to the question;
+- `Score`: one pass per level, one logit each;
+- `Choice`: supported, not routed by default (the vector reading classifies as well and reads each option
+  once for every call).
+
+It sits next to a vector preset, not in place of it. `jul models add` attaches one; the types its
+`cross.json` declares (Noul and Score) are then read by it, and everything else by the vectors. A
+question with a tuned head or a calibration from `autotune` keeps the vector reading those were fitted on,
+and `method="vector"` or `method="cross"` forces one reading for a call.
+
+```bash
+python -m jul.backends.onnx_export <cross model> models/cross-onnx --layers 11
+python -m jul.backends.onnx_export models/cross-onnx models/cross-onnx-w8 --int8 --embedding-bits 4   # 98 MB
+cp <cross model>/cross.json <cross model>/cross_heads.npz models/cross-onnx-w8/
+jul models add jul-decision-e5-small --backend onnx --cross models/cross-onnx-w8
+```
+
+`cross.json` holds the input prefix, the length the pairs are cut to (as in training), the layer, the
+separator between the two segments and the types; `jul.cross.write_spec` writes it from a trained model.
+
+Measured with a cross model trained from `jul-decision-e5-small` (same size, 21 M parameters outside the
+embedding) on relational yes/no questions (paraphrase, inference, compositions, dates) plus single-text
+decisions, both ONNX 8-bit, on Kev's typed-decision questions it never trained on (`transfer-v9`
+development split, clean questions), M4 Pro:
+
+| | Noul | Choice | Score | all | Noul p50 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `jul-decision-e5-small` | 0.582 | 0.385 | 0.275 | 0.452 | 19 ms |
+| with the cross model | **0.694** | 0.385 | **0.500** | **0.502** | **7 ms** |
+| Jev (published) | 0.847 | 0.833 | 0.950 | 0.854 | — |
+
+Paraphrase goes from 0.50 to 0.76, QNLI from 0.55 to 0.66, offensive posts from 0.725 to 0.775. What it
+does not do yet: sentences with the same words in another order ("the dog chased the cat") and date
+arithmetic written in a form it was not trained on stay unreliable, and knowledge questions (MMLU) do
+not move — that needs a larger model, not a different reading.
+
 ## Decision models
 
 A *decision model* is a model trained to answer questions about a state, rather than to write text. It

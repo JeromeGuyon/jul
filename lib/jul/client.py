@@ -105,6 +105,9 @@ class TypeSafeClient:
                    **_ignored: Any) -> SystemOneResponse:
         """Answer every question about one state, in a single pass per formulation.
 
+        With a cross model in the preset (jul/cross.py), the types it declares are read by it; `method`
+        ("vector", "cross") forces one reading for every question of the call.
+
         `route_above` overrides, for this call, the option count above which a decision model hands a
         question to its vector reading (its decision.json sets the default; 0 disables the routing).
 
@@ -156,8 +159,15 @@ class TypeSafeClient:
 
         for name, question in questions.items():
             kind = _kind_of(question)
-            how = method or self.method or DEFAULT_METHOD[kind]
             options = options_of(question)
+            how = method or self.method or self._default_method(engine, ctx, kind, question, options)
+            if how == "cross":
+                if engine.cross is None:
+                    raise ValueError(f"{self._preset.name!r} has no cross model (preset `cross`)")
+                logits, spent = engine.cross.logits(state, kind, question.instructions, options)
+                tokens += spent
+                answers[name] = _format(kind, question, options, softmax(logits))
+                continue
             probabilities, spent = self._answer_probabilities(engine, kind, how, question, options, text,
                                                               ctx, shared)
             tokens += spent
@@ -165,6 +175,16 @@ class TypeSafeClient:
 
         return SystemOneResponse(answers=answers, model=self._preset.name, usage=Usage(input_tokens=tokens),
                                  request_id=str(uuid.uuid4()))
+
+    def _default_method(self, engine: Engine, ctx: Context | None, kind: str, question: Question,
+                        options: list[Option]) -> str:
+        """The cross model for the types it declares, unless this question has a tuned head or a
+        calibration: those were fitted on the vector reading, which then keeps answering it."""
+        if engine.cross is not None and engine.cross.handles(kind):
+            digest = self._digest(kind, question, options)
+            if not (ctx and (digest in ctx.heads or digest in ctx.calibration)):
+                return "cross"
+        return DEFAULT_METHOD[kind]
 
     def _answer_probabilities(self, engine: Engine, kind: str, how: str, question: Question,
                               options: list[Option], text: str, ctx: Context | None,

@@ -42,7 +42,7 @@ training data is not published. On six sources neither ever trained on, Jev lead
 On anything that reads two things together (a paraphrase, a policy against a case), an embedding
 model falls behind the decision model: see [Embedding models](#embedding-models).
 
-Seventeen models were read on these same 300 rows; this table keeps the leaders and the presets. 100 rows per dataset means ±5 points per cell and ±3 on the mean. Every layer
+Eighteen models were read on these same 300 rows; this table keeps the leaders and the presets. 100 rows per dataset means ±5 points per cell and ±3 on the mean. Every layer
 and temperature was fitted on development sets the benchmark never uses. Latencies are p50: `wemm-*`, `f2llm-*` and the tuned rows on an M5 Max, `minicpm5-2b`
 and the decision model on an M4 Pro, where `wemm-4b-4bit` takes 146 ms. Jev's includes
 the network.

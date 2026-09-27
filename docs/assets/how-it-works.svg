@@ -1,0 +1,30 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='760' height='230' viewBox='0 0 760 230' font-family='-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif'>
+<defs><marker id='a' viewBox='0 0 10 10' refX='9' refY='5' markerWidth='7' markerHeight='7' orient='auto'><path d='M0,0L10,5L0,10z' fill='#57606a'/></marker></defs>
+<rect width='760' height='230' rx='10' fill='#ffffff' stroke='#d0d7de'/>
+<rect x='20' y='40' width='170' height='56' rx='8' fill='#f6f8fa' stroke='#d0d7de'/>
+<text x='105.0' y='64' font-size='13' text-anchor='middle' fill='#1f2328' font-weight='600'>your text</text>
+<text x='105.0' y='82' font-size='13' text-anchor='middle' fill='#1f2328'>"charged twice…"</text>
+<rect x='20' y='140' width='170' height='70' rx='8' fill='#f6f8fa' stroke='#d0d7de'/>
+<text x='105.0' y='162' font-size='12' text-anchor='middle' fill='#1f2328' font-weight='600'>option descriptions</text>
+<text x='105.0' y='180' font-size='12' text-anchor='middle' fill='#1f2328'>billing · technical · sales</text>
+<text x='105.0' y='198' font-size='12' text-anchor='middle' fill='#1f2328'>computed once, cached</text>
+<rect x='250' y='70' width='170' height='100' rx='8' fill='#ddf4ff' stroke='#54aeff'/>
+<text x='335.0' y='98' font-size='12' text-anchor='middle' fill='#1f2328' font-weight='600'>any LLM or</text>
+<text x='335.0' y='116' font-size='12' text-anchor='middle' fill='#1f2328' font-weight='600'>embedding model</text>
+<text x='335.0' y='134' font-size='12' text-anchor='middle' fill='#1f2328'>hidden states,</text>
+<text x='335.0' y='152' font-size='12' text-anchor='middle' fill='#1f2328'>no text generated</text>
+<rect x='480' y='70' width='120' height='100' rx='8' fill='#fff8c5' stroke='#d4a72c'/>
+<text x='540.0' y='107' font-size='12' text-anchor='middle' fill='#1f2328' font-weight='600'>cosine</text>
+<text x='540.0' y='125' font-size='12' text-anchor='middle' fill='#1f2328'>minus center</text>
+<text x='540.0' y='143' font-size='12' text-anchor='middle' fill='#1f2328'>softmax / tau</text>
+<rect x='630' y='55' width='110' height='130' rx='8' fill='#dafbe1' stroke='#4ac26b'/>
+<text x='685.0' y='98' font-size='12' text-anchor='middle' fill='#1f2328' font-weight='600'>billing</text>
+<text x='685.0' y='116' font-size='12' text-anchor='middle' fill='#1f2328'>0.88</text>
+<text x='685.0' y='134' font-size='12' text-anchor='middle' fill='#1f2328'>technical 0.11</text>
+<text x='685.0' y='152' font-size='12' text-anchor='middle' fill='#1f2328'>sales 0.01</text>
+<line x1='190' y1='68' x2='248' y2='100' stroke='#57606a' stroke-width='1.6' marker-end='url(#a)'/>
+<line x1='190' y1='175' x2='248' y2='140' stroke='#57606a' stroke-width='1.6' marker-end='url(#a)'/>
+<line x1='420' y1='120' x2='478' y2='120' stroke='#57606a' stroke-width='1.6' marker-end='url(#a)'/>
+<line x1='600' y1='120' x2='628' y2='120' stroke='#57606a' stroke-width='1.6' marker-end='url(#a)'/>
+<text x='20' y='24' font-size='12' fill='#57606a'>The call only pays for its own tokens. The model weights are never changed.</text>
+</svg>

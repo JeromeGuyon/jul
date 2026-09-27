@@ -17,7 +17,7 @@ of that thing are the best investment: a few hundred per question, more for many
 yet? `jul synth` writes synthetic ones from the questions (see [tuning](tuning.md)).
 
 We do not publish the code of our own deployment yet. What follows is everything it does, step by step,
-deployed with the AWS CLI or with CDK. It needs a jul release with cross models (after 0.2.0).
+deployed with the AWS CLI or with CDK. It needs jul 0.3.0 or later (cross models).
 
 ## What was measured
 

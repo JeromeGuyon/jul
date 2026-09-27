@@ -73,9 +73,10 @@ and the Apple Foundation Model types the city names. Six steps from the homepage
 results, about 130 ms per decision.
 </td>
 <td width="50%" valign="top">
-<img src="https://raw.githubusercontent.com/usejul/jul/main/docs/assets/showcase-qa.gif" alt="JuL running a plain-language QA ticket on vistaprint.com"><br>
-<b><a href="https://github.com/usejul/jul-showcases/tree/main/qa-browser">QA written by the product manager</a>.</b> The test is a ticket in plain French or English. JuL
-runs it in a real browser and checks each acceptance criterion. Played here at 3× speed.
+<img src="https://raw.githubusercontent.com/usejul/jul/main/docs/assets/showcase-notifications.svg" alt="Terminal output: JuL keeps an OTP, a payment and an appointment, and mutes a flash sale and a fake iPhone giveaway"><br>
+<b><a href="https://github.com/usejul/jul-showcases/tree/main/notification-triage">Notification triage</a>.</b> One yes/no
+question per notification. Your OTP code and your doctor's appointment get through; the flash sale
+and the "free iPhone" are muted.
 </td>
 </tr>
 </table>

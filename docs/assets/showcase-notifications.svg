@@ -1,0 +1,15 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='760' height='296' viewBox='0 0 760 296'>
+<rect width='760' height='296' rx='10' fill='#0d1117'/>
+<rect width='760' height='34' rx='10' fill='#161b22'/><rect y='24' width='760' height='10' fill='#161b22'/>
+<circle cx='20' cy='17' r='6' fill='#ff5f57'/><circle cx='40' cy='17' r='6' fill='#febc2e'/><circle cx='60' cy='17' r='6' fill='#28c840'/>
+<text x='380.0' y='22' font-size='12' text-anchor='middle' fill='#8b949e' font-family='-apple-system,Segoe UI,Helvetica,Arial,sans-serif'>notification-triage: one yes/no per notification, on device</text>
+<text x='20' y='58' font-size='13' fill='#e6edf3' font-weight='700' xml:space='preserve' font-family='SFMono-Regular,Menlo,Consolas,Liberation Mono,monospace'>$ python notification-triage/run.py</text>
+<text x='20' y='102' font-size='13' fill='#3fb950' font-weight='700' xml:space='preserve' font-family='SFMono-Regular,Menlo,Consolas,Liberation Mono,monospace'>KEPT (you&#x27;ll be notified):</text>
+<text x='20' y='124' font-size='13' fill='#e6edf3' xml:space='preserve' font-family='SFMono-Regular,Menlo,Consolas,Liberation Mono,monospace'>  [ad 0.00]  Your OTP code is 481920. Do not share it with anyone.</text>
+<text x='20' y='146' font-size='13' fill='#e6edf3' xml:space='preserve' font-family='SFMono-Regular,Menlo,Consolas,Liberation Mono,monospace'>  [ad 0.00]  Payment of $1,204.00 to Landlord LLC was successful.</text>
+<text x='20' y='168' font-size='13' fill='#e6edf3' xml:space='preserve' font-family='SFMono-Regular,Menlo,Consolas,Liberation Mono,monospace'>  [ad 0.01]  Dr. Klein&#x27;s office: your appointment is confirmed for Thursday 14:00.</text>
+<text x='20' y='190' font-size='13' fill='#f85149' font-weight='700' xml:space='preserve' font-family='SFMono-Regular,Menlo,Consolas,Liberation Mono,monospace'>MUTED (silenced, not deleted):</text>
+<text x='20' y='212' font-size='13' fill='#8b949e' xml:space='preserve' font-family='SFMono-Regular,Menlo,Consolas,Liberation Mono,monospace'>  [ad 1.00]  🔥 FLASH SALE! 50% off everything — shop now!</text>
+<text x='20' y='234' font-size='13' fill='#8b949e' xml:space='preserve' font-family='SFMono-Regular,Menlo,Consolas,Liberation Mono,monospace'>  [ad 0.84]  Congratulations! You may have won a free iPhone. Tap to claim now!!!</text>
+<text x='20' y='280' font-size='11' fill='#6e7681' font-family='-apple-system,Segoe UI,Helvetica,Arial,sans-serif'>Excerpt of the output published in usejul/jul-showcases. The number is P(ad); muted at 0.5 and above.</text>
+</svg>

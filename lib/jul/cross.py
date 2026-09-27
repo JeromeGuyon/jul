@@ -105,10 +105,15 @@ def location(cross: dict, backend: str) -> Path:
     return local_dir(repo, cross.get("subfolder"))
 
 
-def load(cross: dict, backend: str) -> "CrossReader":
-    """The reader of a preset's `cross` entry, its encoder loaded on `backend`."""
+def load(cross: dict, backend: str, base=None):
+    """The reader of a preset's `cross` entry: its encoder loaded on `backend`, or, for a LoRA cross model,
+    adapters attached to `base` (the preset's own backbone: one model in memory for both readings)."""
     from .backbone import Backbone
     directory = location(cross, backend)
+    if json.loads((directory / SPEC_FILE).read_text()).get("method") == "lora":
+        if base is None:
+            raise ValueError("a LoRA cross model reads with the preset's own backbone: pass `base`")
+        return LoraCrossReader(base, LoraSpec.load(directory))
     backbone = Backbone(str(directory), backend, **({"graph_env": GRAPH_ENV} if backend == "onnx" else {}))
     return CrossReader(backbone, CrossSpec.load(directory))
 
@@ -170,6 +175,180 @@ class CrossReader:
         w, b = self.heads[kind]
         z = v @ w.T + b
         tokens = sum(len(p) + self._specials - len(self._sep) for p in pairs)   # + the outer special tokens
+        if kind == "noul":
+            p = np.exp(z[0] - z[0].max())
+            p /= p.sum()
+            t = float(np.clip(p[0] + p[2] / 2, 1e-7, 1 - 1e-7))
+            by_key = {"true": np.log(t), "false": np.log(1 - t)}
+            return np.array([by_key[o.key] for o in options], dtype=np.float32), tokens
+        return z[:, 0].astype(np.float32), tokens
+
+
+# --- LoRA cross models: the preset's own decoder, with adapters switched on for the cross reading ---------
+
+@dataclass(frozen=True)
+class LoraSpec:
+    """`cross.json` of a LoRA cross model (`"method": "lora"`): adapters for the preset's decoder, read on the
+    last token of its last layer after the final norm.
+
+        {"method": "lora", "base": "tencent/WeMM-Embedding-4B", "scale": 2.0, "adapter": "adapter.npz",
+         "heads": "cross_heads.npz", "types": ["noul", "score"], "max_length": 320,
+         "prompt": "Text: \\"{state}\\"\\n{first}\\nVerdict:",
+         "firsts": {"noul": "Question: {question}", "score": "Question: {question}\\nCandidate answer: {option}"}}
+
+    `adapter` holds `<module path>.a` (r, in) and `<module path>.b` (out, r) per wrapped Linear, the path
+    relative to the decoder (`layers.3.self_attn.q_proj`), as in transformers and mlx-lm alike.
+    """
+    base: str
+    scale: float
+    adapter_file: str
+    heads_file: str
+    types: tuple[str, ...]
+    max_length: int
+    prompt: str
+    firsts: dict
+    directory: Path
+
+    @classmethod
+    def load(cls, directory: str | Path) -> "LoraSpec":
+        directory = Path(directory)
+        d = json.loads((directory / SPEC_FILE).read_text())
+        return cls(base=d["base"], scale=float(d["scale"]), adapter_file=d.get("adapter", "adapter.npz"),
+                   heads_file=d.get("heads", "cross_heads.npz"), types=tuple(d.get("types", ("noul", "score"))),
+                   max_length=int(d.get("max_length", 320)), prompt=d["prompt"], firsts=d["firsts"],
+                   directory=directory)
+
+
+def _attach_mlx(backbone, weights: dict, scale: float) -> list:
+    import mlx.core as mx
+    import mlx.nn as nn
+
+    class LoRA(nn.Module):
+        def __init__(self, base, a, b):
+            super().__init__()
+            self.base, self.a, self.b = base, a, b
+            self.on = False
+
+        def __call__(self, x):
+            y = self.base(x)
+            if not self.on:
+                return y
+            if self.a.dtype != x.dtype:
+                self.a, self.b = self.a.astype(x.dtype), self.b.astype(x.dtype)
+            return y + ((x @ self.a.T) @ self.b.T * scale).astype(y.dtype)
+
+    wrappers = []
+    for path in sorted({k.rsplit(".", 1)[0] for k in weights}):
+        parts = path.split(".")
+        parent = backbone._inner.layers[int(parts[1])]
+        parent = getattr(parent, "block", parent)           # jul's tap around each block
+        for p in parts[2:-1]:
+            parent = getattr(parent, p)
+        base = getattr(parent, parts[-1])
+        if getattr(base, "_jul_lora", False):              # attached again: replace, never stack
+            base = base.base
+        lo = LoRA(base, mx.array(weights[f"{path}.a"]), mx.array(weights[f"{path}.b"]))
+        lo._jul_lora = True
+        setattr(parent, parts[-1], lo)
+        wrappers.append(lo)
+    return wrappers
+
+
+def _attach_torch(backbone, weights: dict, scale: float) -> list:
+    import torch
+
+    class LoRA(torch.nn.Module):
+        def __init__(self, base, a, b):
+            super().__init__()
+            self.base = base
+            self.register_buffer("a", a)
+            self.register_buffer("b", b)
+            self.on = False
+
+        def forward(self, x):
+            y = self.base(x)
+            if not self.on:
+                return y
+            return y + (x.to(self.a.dtype) @ self.a.T @ self.b.T * scale).to(y.dtype)
+
+    wrappers = []
+    dtype = next(backbone._decoder.parameters()).dtype
+    for path in sorted({k.rsplit(".", 1)[0] for k in weights}):
+        parts = path.split(".")
+        parent = backbone._decoder.layers[int(parts[1])]
+        for p in parts[2:-1]:
+            parent = getattr(parent, p)
+        base = getattr(parent, parts[-1])
+        if getattr(base, "_jul_lora", False):              # attached again: replace, never stack
+            base = base.base
+        a, b = (torch.from_numpy(weights[f"{path}.{k}"]).to(base.weight.device, dtype) for k in ("a", "b"))
+        lo = LoRA(base, a, b)
+        lo._jul_lora = True
+        setattr(parent, parts[-1], lo)
+        wrappers.append(lo)
+    return wrappers
+
+
+class LoraCrossReader:
+    """The cross reading of a decoder through LoRA adapters attached to it. The adapters are off except
+    inside `logits`, so the vector reading of the same backbone is untouched (one model in memory)."""
+
+    def __init__(self, backbone, spec: LoraSpec):
+        if backbone.architecture != "decoder":
+            raise ValueError(f"a LoRA cross model needs a decoder backbone, {backbone.name} is a {backbone.architecture}")
+        self.backbone, self.spec = backbone, spec
+        weights = dict(np.load(spec.directory / spec.adapter_file))
+        attach = {"mlx": _attach_mlx, "torch": _attach_torch}.get(backbone.backend)
+        if attach is None:
+            raise ValueError(f"LoRA cross models run on mlx or torch, not {backbone.backend}")
+        self._loras = attach(backbone, weights, spec.scale)
+        w = np.load(spec.directory / spec.heads_file)
+        self.heads = {t: (w[f"{t}_weight"].astype(np.float32), w[f"{t}_bias"].astype(np.float32)) for t in TYPES}
+        self._layer = backbone.n_layers - 1
+
+    def handles(self, kind: str) -> bool:
+        return kind in self.spec.types
+
+    def _switch(self, on: bool) -> None:
+        for lo in self._loras:
+            lo.on = on
+
+    def _final_norm(self, v: np.ndarray) -> np.ndarray:
+        bb = self.backbone
+        if bb.backend == "mlx":
+            import mlx.core as mx
+            return np.array(bb._inner.norm(mx.array(v)).astype(mx.float32))
+        import torch
+        with torch.no_grad():
+            return bb._decoder.norm(torch.from_numpy(v).to(bb.device)).float().cpu().numpy()
+
+    def firsts(self, kind: str, instructions: str, options: list[Option]) -> list[str]:
+        f = self.spec.firsts[kind]
+        if kind == "noul":
+            return [f.format(question=CrossReader.firsts("noul", instructions, options)[0])]
+        return [f.format(question=instructions, option=o.description if kind == "score" else
+                         (f"{o.key}: {render(o.description)}" if o.description else o.key)) for o in options]
+
+    def _prompt(self, first: str, text: str) -> list[int]:
+        """As the adapters were trained: the text is cut so that the whole prompt fits in max_length."""
+        head, tail = self.spec.prompt.split("{state}")
+        tail_ids = self.backbone.encode(tail.replace("{first}", first))
+        room = max(8, self.spec.max_length - len(tail_ids))
+        return self.backbone.encode(head + text)[:room] + tail_ids
+
+    def logits(self, state: Any, kind: str, instructions: str, options: list[Option]) -> tuple[np.ndarray, int]:
+        text = state if isinstance(state, str) else render(state)
+        prompts = [self._prompt(f, text) for f in self.firsts(kind, instructions, options)]
+        self._switch(True)
+        try:
+            feats = self.backbone.forward_batch(prompts, layers=(self._layer,))
+        finally:
+            self._switch(False)
+        d = feats[0][self._layer].shape[0] // 2
+        v = self._final_norm(np.stack([f[self._layer][:d] for f in feats]).astype(np.float32))
+        w, b = self.heads[kind]
+        z = v @ w.T + b
+        tokens = sum(len(p) for p in prompts)
         if kind == "noul":
             p = np.exp(z[0] - z[0].max())
             p /= p.sum()

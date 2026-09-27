@@ -117,7 +117,7 @@ class Engine:
         self.cross = None
         if preset.cross:
             from . import cross
-            self.cross = cross.load(preset.cross, backbone.backend)
+            self.cross = cross.load(preset.cross, backbone.backend, base=backbone)
         self._questions: OrderedDict[tuple, CompiledQuestion] = OrderedDict()
         self._max_cached = max_cached_questions
         self._one_word_templates: dict[str, PromptTemplate] = {}

@@ -268,3 +268,77 @@ def test_autotune_keeps_the_cross_model_unless_the_head_beats_it(cross_setup, mo
     ctx = Context()
     client.autotune(ctx, q, labeled, save=False)
     assert client._default_method(engine, ctx, "noul", q["urgent"], options_of(q["urgent"])) == "vector"
+
+
+# --- LoRA cross models: adapters on the preset's own decoder (tiny random Qwen3, torch) --------------
+
+def write_lora(tmp_path, backbone, scale=2.0, zero=False):
+    """Random adapters on two Linear layers of the tiny decoder, random heads."""
+    from jul.cross import LoraSpec
+    rng = np.random.default_rng(0)
+    dec = backbone._decoder
+    weights = {}
+    for path, lin in (("layers.0.self_attn.q_proj", dec.layers[0].self_attn.q_proj),
+                      ("layers.2.mlp.down_proj", dec.layers[2].mlp.down_proj)):
+        lin = getattr(lin, "base", lin)                  # the session's backbone may carry adapters already
+        weights[f"{path}.a"] = rng.normal(0, 0.5, (4, lin.in_features)).astype(np.float16)
+        weights[f"{path}.b"] = (np.zeros if zero else lambda s: rng.normal(0, 0.5, s))((lin.out_features, 4)).astype(np.float16)
+    np.savez(tmp_path / "adapter.npz", **weights)
+    d = dec.config.hidden_size
+    np.savez(tmp_path / "cross_heads.npz", **{f"{t}_{k}": rng.normal(0, 1, (n, d) if k == "weight" else (n,)).astype(np.float32)
+                                             for t, n in (("noul", 3), ("choice", 1), ("score", 1)) for k in ("weight", "bias")})
+    (tmp_path / "cross.json").write_text(json.dumps({
+        "method": "lora", "base": "tiny", "scale": scale, "adapter": "adapter.npz", "heads": "cross_heads.npz",
+        "types": ["noul", "score"], "max_length": 48, "prompt": 'Text: "{state}"\n{first}\nVerdict:',
+        "firsts": {"noul": "Question: {question}", "score": "Question: {question}\nCandidate answer: {option}"}}))
+    return LoraSpec.load(tmp_path)
+
+
+@needs_export
+def test_lora_adapters_leave_the_vector_reading_untouched_and_change_the_cross_one(pair, tmp_path):
+    from jul.backbone import PromptTemplate
+    from jul.cross import LoraCrossReader
+    from jul.presets import ONE_WORD
+    torch_bb, _ = pair
+    tpl = PromptTemplate(torch_bb, *ONE_WORD.split("{state}"))
+    texts = ["I was charged twice", "Le colis n'est jamais arrivé"]
+    before = [f[3] for f in tpl.run_batch(texts, layers=[3])]
+    reader = LoraCrossReader(torch_bb, write_lora(tmp_path, torch_bb))
+    try:
+        after = [f[3] for f in tpl.run_batch(texts, layers=[3])]
+        assert all(np.array_equal(x, y) for x, y in zip(before, after))          # adapters off: same model
+        opts = options_of(Noul(instructions="Was it paid on time?"))
+        z, tokens = reader.logits("Paid on May 3, due May 9.", "noul", "Was it paid on time?", opts)
+        assert z.shape == (2,) and np.isclose(np.exp(z).sum(), 1.0, atol=1e-5) and tokens > 0
+        levels = options_of(Score(instructions="How urgent?", criteria=["low", "medium", "high"]))
+        assert reader.logits("x", "score", "How urgent?", levels)[0].shape == (3,)
+        after2 = [f[3] for f in tpl.run_batch(texts, layers=[3])]
+        assert all(np.array_equal(x, y) for x, y in zip(before, after2))         # switched off again
+        # the same prompt through adapters whose B is zero reads as the plain decoder: the adapters did something
+        on = reader.logits("Paid on May 3, due May 9.", "noul", "Was it paid on time?", opts)[0]
+        for lo in reader._loras:
+            lo.b.zero_()
+        off = reader.logits("Paid on May 3, due May 9.", "noul", "Was it paid on time?", opts)[0]
+        assert not np.allclose(on, off)
+    finally:
+        for lo in reader._loras:                                                 # the backbone is session-wide
+            lo.on = False
+            lo.b.zero_()
+
+
+@needs_export
+def test_lora_prompt_cuts_the_text_to_max_length(pair, tmp_path):
+    from jul.cross import LoraCrossReader
+    torch_bb, _ = pair
+    reader = LoraCrossReader(torch_bb, write_lora(tmp_path, torch_bb, zero=True))
+    first = reader.firsts("noul", "Is it late?", options_of(Noul(instructions="Is it late?")))[0]
+    assert first == "Question: Is it late?"
+    ids = reader._prompt(first, "word " * 500)
+    assert len(ids) <= 48 and ids[-3:] == torch_bb.encode("\nVerdict:")[-3:]
+
+
+def test_a_lora_cross_model_needs_the_presets_backbone(tmp_path):
+    from jul import cross
+    (tmp_path / "cross.json").write_text(json.dumps({"method": "lora"}))
+    with pytest.raises(ValueError, match="own backbone"):
+        cross.load({"repo": str(tmp_path)}, "torch")

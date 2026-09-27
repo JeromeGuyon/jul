@@ -155,6 +155,41 @@ under a commercial license), hard but polite complaints read as offensive, sente
 in another order, and knowledge questions (MMLU does not move — that needs a larger model, not another
 reading).
 
+### A cross model on the preset's own weights (LoRA)
+
+A cross model can also be a set of adapters on the vector model itself instead of a second encoder: one
+model in memory for both readings. Its `cross.json` says `"method": "lora"` and names LoRA adapters (A and
+B for each Linear layer, by module path, as transformers and mlx-lm name them) and the heads. The engine
+attaches them to the backbone it already holds and switches them on only while it reads a Noul or a
+Score, so the vector reading is unchanged: the features are the same with the adapters attached
+(`tests/test_cross.py`). The prompt is `Text: "<text>"`, then `Question: <question>` (and, for a Score,
+`Candidate answer: <level>`), then `Verdict:`, read on the last token of the last layer after the final
+norm: one pass for a Noul, one per level for a Score. MLX and PyTorch.
+
+```bash
+# a directory with cross.json, adapter.npz and cross_heads.npz
+jul models add wemm-4b-4bit --backend mlx --cross models/wemm-4b-cross
+jul ask noul "Was it paid on time?" --state "Invoice due May 9; paid May 3."
+```
+
+Measured with WeMM-Embedding-4B (rank-16 adapters on its 248 Linear layers: 32.5M parameters, 65 MB in
+float16; trained on relational yes/no, single-text decisions and scores), on the same Kev questions as
+above, never trained on:
+
+| WeMM-Embedding-4B | Noul | Score |
+| --- | ---: | ---: |
+| vectors only (PyTorch bf16) | 0.762 | 0.325 |
+| with the LoRA cross model, PyTorch bf16 | **0.859** | **0.550** |
+| with the LoRA cross model, MLX 4-bit (M4 Pro, ~115 ms per Noul) | 0.841 | 0.300 |
+
+Paraphrase goes from 0.69 to 0.93 and QNLI from 0.79 to 0.87 (MLX), and Noul's calibration error from 0.126
+to 0.043. On date questions worded freely (warranties, trials, bookings, ages, deadlines: 390 cases in
+English and French), comparing two dates is solved — which comes first, same month, on time: 1.00, against
+0.62–0.90 for the vectors — but a gap to compute (an age, a warranty in months, a trial in days) stays near
+chance, with or without the adapters. That is also why Score barely moves in 4-bit: its questions here are
+deadlines, close calls that 4-bit weights flip. Choice questions keep the vectors, so the Jev benchmark
+(0.857 zero-shot) is untouched by construction.
+
 ## Decision models
 
 A *decision model* is a model trained to answer questions about a state, rather than to write text. It

@@ -266,11 +266,19 @@ def _with_cross(preset, cross):
     types its cross.json declares (jul/cross.py)."""
     import dataclasses
 
-    from jul.cross import CrossSpec, local_dir
+    import json
+
+    from jul.cross import SPEC_FILE, CrossSpec, LoraSpec, local_dir
     entry = cross if isinstance(cross, dict) else {"repo": cross}
-    spec = CrossSpec.load(local_dir(entry["repo"], entry.get("subfolder")))
+    directory = local_dir(entry["repo"], entry.get("subfolder"))
     where = entry["repo"] + (f"/{entry['subfolder']}" if entry.get("subfolder") else "")
-    print(f"  cross model {where}: reads {', '.join(spec.types)} (layer {spec.layer}, {spec.max_length} tokens)")
+    if json.loads((directory / SPEC_FILE).read_text()).get("method") == "lora":
+        spec = LoraSpec.load(directory)
+        print(f"  cross model {where}: LoRA adapters on {spec.base}, read with the preset's own model; "
+              f"reads {', '.join(spec.types)} ({spec.max_length} tokens)")
+    else:
+        spec = CrossSpec.load(directory)
+        print(f"  cross model {where}: reads {', '.join(spec.types)} (layer {spec.layer}, {spec.max_length} tokens)")
     return dataclasses.replace(preset, cross=entry)
 
 
@@ -287,7 +295,9 @@ def cmd_models_add(a):
             preset = resolve(a.name, backend)
         except ValueError as exc:
             raise SystemExit(f"error: {exc}") from exc
-        path = save_preset(_with_cross(preset, a.cross))
+        import dataclasses
+        # a built-in preset names no backend: the copy saved with its cross model is for this one
+        path = save_preset(dataclasses.replace(_with_cross(preset, a.cross), backend=preset.backend or backend))
         print(f"{a.name} on {backend}: cross model attached -> {path}")
         return
     from jul.decision import spec_source

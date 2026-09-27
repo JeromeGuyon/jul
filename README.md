@@ -22,10 +22,23 @@ goes to a third party and there is no per-call bill, so you can leave it running
 infrastructure. The model weights are downloaded once from the Hugging Face Hub, or loaded from a
 local path; after that, `HF_HUB_OFFLINE=1` keeps it off the network entirely.
 
-It answers typed questions about a piece of text: pick an option, say yes or no, give a score, each
-with a probability, in about 55 ms on a Mac. It is a drop-in for the Jev SDK: change the import and
-the same code runs on your machines. To serve other languages on-prem, `jul serve` speaks the Jev
-HTTP protocol.
+It answers typed questions about a piece of text: pick an option, say yes or no, give a score. Each
+answer comes with a probability.
+
+## Why JuL
+
+- Zero-shot: the default model scores 0.857 on Jev's public benchmark without seeing one example of
+  its tasks. On AG News, the one task embedding models haven't trained on, `wemm-4b` gets 0.95 and Jev 0.91.
+- Many options: 0.87 on Banking77's 72 intents (a task in MTEB, see [Results](#results)). Option
+  vectors are cached, so adding options barely changes the cost of a call.
+- Probabilities you can use: ECE 0.084, so you can automate above a confidence threshold and send the
+  rest to a human.
+- Small and fast: 2.6 GB and 55 ms per decision on a Mac. `f2llm-1.7b` fits in 1 GB and answers in 24 ms.
+- Replaceable model: we measured 17, and `jul models add` wires in a new one without touching your code.
+- Tunable when you have labels: `autotune(...)` takes the default model from 0.857 to 0.897 with 1000
+  examples, and keeps the head only if it beats zero-shot.
+- Drop-in for the Jev SDK: change the import and the same code runs on your machines. `jul serve`
+  speaks the Jev HTTP protocol for other languages.
 
 ## Quickstart
 
@@ -132,6 +145,19 @@ A TF-IDF + linear SVM, trained on 1000 labeled examples with no LLM at all, scor
 sorting by topic or intent, try it first. CI re-measures these numbers on every PR
 ([numbers.yml](https://github.com/usejul/jul/blob/main/.github/workflows/numbers.yml), `CLAIMED`),
 so update both together.
+
+## Models
+
+| Preset | Size | Jev bench, zero-shot | + autotune, 1000 labels | Notes |
+| --- | ---: | ---: | ---: | --- |
+| `wemm-4b-4bit` (default, alias `accurate`) | 2.6 GB | 0.857 | 0.897 | built in |
+| `minicpm5-2b` (alias `fast`) | 2.7 GB | 0.617 | 0.757 | built in, 62 ms on an M4 Pro |
+| `minicpm5-2b-decision` | 1.3 GB | see [benchmarks](https://github.com/usejul/jul/blob/main/docs/benchmarks.md) | — | trained decision model, `jul models add` |
+| `e5-small` (ONNX, 8-bit) | 0.09 GB | 0.543 | 0.713 (0.790 hybrid head) | encoder, 6 ms per text on an M4 Pro |
+
+To use another model, run `jul models add <name> --repo <hf-repo>`. It fits the layer, center and
+temperature on the dev sets. The 17 models we measured, encoders, decision models and every setting
+are listed in [docs/models.md](https://github.com/usejul/jul/blob/main/docs/models.md).
 
 ## Documentation
 

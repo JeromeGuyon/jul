@@ -167,20 +167,20 @@ Score, so the vector reading is unchanged: the features are the same with the ad
 norm: one pass for a Noul, one per level for a Score. MLX and PyTorch.
 
 ```bash
-# a directory with cross.json, adapter.npz and cross_heads.npz
-jul models add wemm-4b-4bit --backend mlx --cross models/wemm-4b-cross
+# a directory with cross.json, adapter.npz and cross_heads.npz, on top of the default model
+jul models add wemm-4b-4bit --backend mlx --cross models/jul-decision-wemm-4b-4bit
 jul ask noul "Was it paid on time?" --state "Invoice due May 9; paid May 3."
 ```
 
-Measured with WeMM-Embedding-4B (rank-16 adapters on its 248 Linear layers: 32.5M parameters, 65 MB in
-float16; trained on relational yes/no, single-text decisions and scores), on the same Kev questions as
-above, never trained on:
+`jul-decision-wemm-4b-4bit` is WeMM-Embedding-4B with such a cross model (rank-16 adapters on its 248 Linear layers: 32.5M parameters, 65 MB in
+float16; trained on relational yes/no, single-text decisions and scores). Measured on the same Kev
+questions as above, never trained on:
 
-| WeMM-Embedding-4B | Noul | Score |
+| | Noul | Score |
 | --- | ---: | ---: |
-| vectors only (PyTorch bf16) | 0.762 | 0.325 |
-| with the LoRA cross model, PyTorch bf16 | **0.859** | **0.550** |
-| with the LoRA cross model, MLX 4-bit (M4 Pro, ~115 ms per Noul) | 0.841 | 0.300 |
+| `wemm-4b-4bit`, vectors only (PyTorch bf16) | 0.762 | 0.325 |
+| `jul-decision-wemm-4b-4bit`, PyTorch bf16 | **0.859** | **0.550** |
+| `jul-decision-wemm-4b-4bit`, MLX 4-bit (M4 Pro, ~115 ms per Noul) | 0.841 | 0.300 |
 
 Paraphrase goes from 0.69 to 0.93 and QNLI from 0.79 to 0.87 (MLX), and Noul's calibration error from 0.126
 to 0.043. On date questions worded freely (warranties, trials, bookings, ages, deadlines: 390 cases in

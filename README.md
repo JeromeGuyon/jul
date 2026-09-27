@@ -173,7 +173,11 @@ so update both together.
 | `minicpm5-2b` (alias `fast`) | 2.7 GB | 0.617 | 0.757 | built in, 64 ms on an M4 Pro |
 | `minicpm5-2b-decision` | 1.3 GB | see [benchmarks](https://github.com/usejul/jul/blob/main/docs/benchmarks.md) | — | trained decision model, `jul models add` |
 | `e5-small` (ONNX, 8-bit) | 0.09 GB | 0.543 | 0.713 (0.790 hybrid head) | encoder, 6 ms per text on an M4 Pro; needs an ONNX export first, see [models](https://github.com/usejul/jul/blob/main/docs/models.md#micro-models-encoders) |
+| `jul-decision-wemm-4b-4bit` (MLX, 4-bit) | 2.6 GB (+0.07 GB adapters) | 0.857 ¹ | 0.897 ¹ | the default model with a [LoRA cross model](https://github.com/usejul/jul/blob/main/docs/models.md#a-cross-model-on-the-presets-own-weights-lora) on the same weights for Noul and Score (yes/no 0.841 on Kev's typed decisions, against 0.762 with vectors; ~115 ms per yes/no on an M4 Pro); one model in memory, `jul models add` |
 | `jul-decision-e5-small` (ONNX, 8-bit) | 0.09 GB (+0.09 GB cross model) | 0.557 | 0.723 (0.780 hybrid head) | e5-small trained on jul decisions, with a [cross model](https://github.com/usejul/jul/blob/main/docs/models.md#cross-models-reading-the-question-and-the-text-together) for Noul and Score (yes/no 0.726 on Kev's typed decisions, against 0.579 with vectors); runs in [AWS Lambda](https://github.com/usejul/jul/blob/main/docs/aws-lambda.md), `jul models add` |
+
+¹ Choice questions, the only ones in the Jev benchmark, are read by the vectors of `wemm-4b-4bit`, which the
+adapters leave untouched (switched off, the features are the same): its numbers.
 
 To use another model, run `jul models add <name> --repo <hf-repo>`. It fits the layer, center and
 temperature on the dev sets. The 18 models we measured, encoders, decision models and every setting

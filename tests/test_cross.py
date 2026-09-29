@@ -272,8 +272,13 @@ def test_autotune_keeps_the_cross_model_unless_the_head_beats_it(cross_setup, mo
 
 # --- LoRA cross models: adapters on the preset's own decoder (tiny random Qwen3, torch) --------------
 
-def write_lora(tmp_path, backbone, scale=2.0, zero=False):
-    """Random adapters on two Linear layers of the tiny decoder, random heads."""
+LISTWISE = {"reading": "listwise", "before": 'Text: "', "after": '"\nQuestion: {question}\nOptions:\n',
+            "option": "- {option}", "separator": "\n", "answer": "Answer:", "max_state": 16, "max_option": 6,
+            "mix": 3.0}
+
+
+def write_lora(tmp_path, backbone, scale=2.0, zero=False, choice=None):
+    """Random adapters on two Linear layers of the tiny decoder, random heads (and a listwise choice)."""
     from jul.cross import LoraSpec
     rng = np.random.default_rng(0)
     dec = backbone._decoder
@@ -285,12 +290,15 @@ def write_lora(tmp_path, backbone, scale=2.0, zero=False):
         weights[f"{path}.b"] = (np.zeros if zero else lambda s: rng.normal(0, 0.5, s))((lin.out_features, 4)).astype(np.float16)
     np.savez(tmp_path / "adapter.npz", **weights)
     d = dec.config.hidden_size
+    heads = (("noul", 3), ("choice", 1), ("score", 1)) + ((("choice_q", 8), ("choice_k", 8)) if choice else ())
     np.savez(tmp_path / "cross_heads.npz", **{f"{t}_{k}": rng.normal(0, 1, (n, d) if k == "weight" else (n,)).astype(np.float32)
-                                             for t, n in (("noul", 3), ("choice", 1), ("score", 1)) for k in ("weight", "bias")})
+                                             for t, n in heads for k in ("weight", "bias")})
     (tmp_path / "cross.json").write_text(json.dumps({
         "method": "lora", "base": "tiny", "scale": scale, "adapter": "adapter.npz", "heads": "cross_heads.npz",
-        "types": ["noul", "score"], "max_length": 48, "prompt": 'Text: "{state}"\n{first}\nVerdict:',
-        "firsts": {"noul": "Question: {question}", "score": "Question: {question}\nCandidate answer: {option}"}}))
+        "types": ["noul", "score"] + (["choice"] if choice else []), "max_length": 48,
+        "prompt": 'Text: "{state}"\n{first}\nVerdict:',
+        "firsts": {"noul": "Question: {question}", "score": "Question: {question}\nCandidate answer: {option}"},
+        **({"choice": choice} if choice else {})}))
     return LoraSpec.load(tmp_path)
 
 
@@ -342,3 +350,42 @@ def test_a_lora_cross_model_needs_the_presets_backbone(tmp_path):
     (tmp_path / "cross.json").write_text(json.dumps({"method": "lora"}))
     with pytest.raises(ValueError, match="own backbone"):
         cross.load({"repo": str(tmp_path)}, "torch")
+
+
+@needs_export
+def test_listwise_choice_reads_every_option_in_one_pass(pair, tmp_path):
+    from jul.cross import LoraCrossReader
+    torch_bb, _ = pair
+    reader = LoraCrossReader(torch_bb, write_lora(tmp_path, torch_bb, choice=LISTWISE))
+    try:
+        q = Choice(instructions="Which team?", criteria={"billing": "charges and invoices", "shipping": "",
+                                                         "returns": "refunds"})
+        opts = options_of(q)
+        ids, ends = reader.listwise("I was charged twice " * 20, "Which team?", opts)
+        sep = torch_bb.encode("\n")
+        assert len(ends) == 3 and all(ids[e - len(sep) + 1: e + 1] == sep for e in ends)
+        assert ids[-len(torch_bb.encode("Answer:")):] == torch_bb.encode("Answer:")
+        assert ids[len(torch_bb.encode('Text: "')): ][:16] == torch_bb.encode("I was charged twice " * 20)[:16]
+        z, tokens = reader.logits("I was charged twice", "choice", "Which team?", opts)
+        assert z.shape == (3,) and np.isfinite(z).all() and tokens > 0
+        assert all(not lo.on for lo in reader._loras)                          # switched off after the pass
+        # options interact: another option list changes the scores of the ones kept
+        z2 = reader.logits("I was charged twice", "choice", "Which team?", options_of(
+            Choice(instructions="Which team?", criteria={"billing": "charges and invoices", "shipping": ""})))[0]
+        assert not np.allclose(z[:2], z2)
+        assert reader.vector_mix("choice") == 3.0 and reader.vector_mix("noul") is None
+    finally:
+        for lo in reader._loras:
+            lo.on = False
+            lo.b.zero_()
+
+
+def test_listwise_choice_needs_its_heads(pair, tmp_path):
+    from jul.cross import LoraCrossReader, LoraSpec
+    torch_bb, _ = pair
+    spec = write_lora(tmp_path, torch_bb, zero=True, choice=LISTWISE)
+    w = dict(np.load(tmp_path / "cross_heads.npz"))
+    np.savez(tmp_path / "cross_heads.npz", **{k: v for k, v in w.items() if not k.startswith("choice_k")})
+    with pytest.raises(ValueError, match="choice_q"):
+        LoraCrossReader(torch_bb, LoraSpec.load(tmp_path))
+    assert spec.choice["mix"] == 3.0

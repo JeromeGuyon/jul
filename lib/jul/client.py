@@ -166,6 +166,12 @@ class TypeSafeClient:
                     raise ValueError(f"{self._preset.name!r} has no cross model (preset `cross`)")
                 logits, spent = engine.cross.logits(state, kind, question.instructions, options)
                 tokens += spent
+                mix = getattr(engine.cross, "vector_mix", lambda k: None)(kind)
+                if mix is not None:               # the cross reading next to the vector one, in log-probabilities
+                    vector, spent = self._answer_probabilities(engine, kind, "vector", question, options, text,
+                                                               ctx, shared)
+                    tokens += spent
+                    logits = np.log(np.clip(vector, 1e-12, 1.0)) + mix * (logits - _logsumexp(logits))
                 answers[name] = _format(kind, question, options, softmax(logits))
                 continue
             probabilities, spent = self._answer_probabilities(engine, kind, how, question, options, text,
@@ -315,6 +321,11 @@ class AsyncTypeSafeClient(TypeSafeClient):
 
 
 # --- helpers ---------------------------------------------------------------------------------
+
+def _logsumexp(z: np.ndarray) -> float:
+    m = float(np.max(z))
+    return m + float(np.log(np.exp(z - m).sum()))
+
 
 def _kind_of(question: Question) -> str:
     kind = _KIND.get(type(question))

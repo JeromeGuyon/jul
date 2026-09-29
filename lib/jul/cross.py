@@ -11,7 +11,8 @@ last layer feeds a small head chosen by the question type.
   trained: "question (true: ...; false: ...)".
 - score: one pass per level (`question\\nlevel` against the text), one logit each.
 - choice: one pass per option, the same way. Not routed here by default: the vector reading scores as
-  well on classification and reads every option once for all calls.
+  well on classification and reads every option once for all calls. A LoRA cross model can read a Choice
+  listwise instead (every option in one pass, next to the vector reading; see LoraSpec).
 
 A cross model is a directory (or Hub repo) with the encoder's weights for a backend (transformers for
 torch, `jul.backends.onnx_export` for onnx), its tokenizer, and `cross.json`:
@@ -198,6 +199,19 @@ class LoraSpec:
 
     `adapter` holds `<module path>.a` (r, in) and `<module path>.b` (out, r) per wrapped Linear, the path
     relative to the decoder (`layers.3.self_attn.q_proj`), as in transformers and mlx-lm alike.
+
+    A `choice` entry (with "choice" in `types`) reads a Choice listwise: the text, the question and every
+    option in one prompt, one pass for any number of options, as the adapters were trained:
+
+        "choice": {"reading": "listwise", "before": "Text: \"", "after": "\"\nQuestion: {question}\nOptions:\n",
+                   "option": "- {option}", "separator": "\n", "answer": "Answer:", "max_state": 320,
+                   "max_option": 48, "mix": 3.0}
+
+    Each piece is tokenized on its own and the ids concatenated (the text cut to `max_state` tokens, each
+    option to `max_option`). The decision is the hidden state of the last token ("Answer:"), each option the
+    hidden state of the separator that closes it; `choice_q_*` and `choice_k_*` in the heads project them,
+    and an option's logit is their dot product over sqrt(width). `mix` is the weight of this reading next to
+    the vector one: log p = log p_vector + mix * log p_listwise (None: the listwise reading alone).
     """
     base: str
     scale: float
@@ -208,6 +222,7 @@ class LoraSpec:
     prompt: str
     firsts: dict
     directory: Path
+    choice: dict | None = None
 
     @classmethod
     def load(cls, directory: str | Path) -> "LoraSpec":
@@ -216,7 +231,7 @@ class LoraSpec:
         return cls(base=d["base"], scale=float(d["scale"]), adapter_file=d.get("adapter", "adapter.npz"),
                    heads_file=d.get("heads", "cross_heads.npz"), types=tuple(d.get("types", ("noul", "score"))),
                    max_length=int(d.get("max_length", 320)), prompt=d["prompt"], firsts=d["firsts"],
-                   directory=directory)
+                   directory=directory, choice=d.get("choice"))
 
 
 def _attach_mlx(backbone, weights: dict, scale: float) -> list:
@@ -303,11 +318,20 @@ class LoraCrossReader:
             raise ValueError(f"LoRA cross models run on mlx or torch, not {backbone.backend}")
         self._loras = attach(backbone, weights, spec.scale)
         w = np.load(spec.directory / spec.heads_file)
-        self.heads = {t: (w[f"{t}_weight"].astype(np.float32), w[f"{t}_bias"].astype(np.float32)) for t in TYPES}
+        self.heads = {t: (w[f"{t}_weight"].astype(np.float32), w[f"{t}_bias"].astype(np.float32))
+                      for t in (*TYPES, "choice_q", "choice_k") if f"{t}_weight" in w}
+        if spec.choice and not {"choice_q", "choice_k"} <= set(self.heads):
+            raise ValueError(f"{spec.directory}: a listwise choice needs choice_q_* and choice_k_* heads")
         self._layer = backbone.n_layers - 1
 
     def handles(self, kind: str) -> bool:
         return kind in self.spec.types
+
+    def vector_mix(self, kind: str) -> float | None:
+        """The weight of this reading next to the vector one for `kind`, or None when it answers alone."""
+        if kind == "choice" and self.spec.choice:
+            return self.spec.choice.get("mix")
+        return None
 
     def _switch(self, on: bool) -> None:
         for lo in self._loras:
@@ -336,8 +360,34 @@ class LoraCrossReader:
         room = max(8, self.spec.max_length - len(tail_ids))
         return self.backbone.encode(head + text)[:room] + tail_ids
 
+    def listwise(self, text: str, instructions: str, options: list[Option]) -> tuple[list[int], list[int]]:
+        """Token ids of the listwise prompt and the position closing each option (see LoraSpec)."""
+        c, encode = self.spec.choice, self.backbone.encode
+        ids = (encode(c["before"]) + encode(text)[: c["max_state"]]
+               + encode(c["after"].format(question=instructions)))
+        sep, ends = encode(c["separator"]), []
+        for o in options:
+            name = f"{o.key}: {render(o.description)}" if o.description else o.key
+            ids = ids + encode(c["option"].format(option=name))[: c["max_option"]] + sep
+            ends.append(len(ids) - 1)
+        return ids + encode(c["answer"]), ends
+
+    def _listwise_logits(self, text: str, instructions: str, options: list[Option]) -> tuple[np.ndarray, int]:
+        ids, ends = self.listwise(text, instructions, options)
+        self._switch(True)
+        try:
+            h = np.asarray(self.backbone.last_hidden(ids), dtype=np.float32)   # last layer, after the final norm
+        finally:
+            self._switch(False)
+        (wq, bq), (wk, bk) = self.heads["choice_q"], self.heads["choice_k"]
+        q = h[-1] @ wq.T + bq
+        k = h[ends] @ wk.T + bk
+        return (k @ q / np.sqrt(q.shape[-1])).astype(np.float32), len(ids)
+
     def logits(self, state: Any, kind: str, instructions: str, options: list[Option]) -> tuple[np.ndarray, int]:
         text = state if isinstance(state, str) else render(state)
+        if kind == "choice" and self.spec.choice:
+            return self._listwise_logits(text, instructions, options)
         prompts = [self._prompt(f, text) for f in self.firsts(kind, instructions, options)]
         self._switch(True)
         try:

@@ -31,8 +31,8 @@ def test_normalize_gives_unit_vectors():
 
 def test_presets_are_aliased_and_unknown_names_are_refused():
     assert resolve("fast").name == "minicpm5-2b"
-    assert resolve("accurate").name == "wemm-4b-4bit"
-    assert resolve(None).name == "wemm-4b-4bit"
+    assert resolve("accurate").name == "jul-decision-wemm-4b"
+    assert resolve(None).name == "jul-decision-wemm-4b"
     try:
         resolve("gpt-9")
     except ValueError as e:

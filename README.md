@@ -35,6 +35,9 @@ network at all.
 - Zero-shot: the default model scores 0.857 on Jev's public benchmark (Jev: 0.753) without one example
   of its tasks. Its settings were fitted on dev sets the benchmark never touches. On AG News, the one
   task embedding models haven't trained on, the default gets 0.90, `wemm-4b` 0.95 and Jev 0.91.
+- Close to Jev on typed decisions: `jul-decision-wemm-4b`, the default model on PyTorch, answers 0.849 of
+  2,108 Choice, Noul and Score questions over 12 task families, Jev 0.873, at 97 ms per decision on one A10G
+  GPU ([per family](#decision-bench-against-jev)).
 - Many options: option vectors are computed once and cached, so adding options barely changes the cost
   of a call. On Banking77's 72 intents the default model gets 0.87, on a task its training data
   (MTEB) contains.
@@ -54,7 +57,7 @@ network at all.
 # from typesafe_sdk import TypeSafeClient, Choice, Noul, Score
 from jul import TypeSafeClient, Choice, Noul, Score
 
-client = TypeSafeClient()                             # wemm-4b-4bit, or model="minicpm5-2b"
+client = TypeSafeClient()                             # jul-decision-wemm-4b, or model="minicpm5-2b"
 
 response = client.system_one(
     state={"ticket": "I was charged twice for my subscription this month."},
@@ -155,6 +158,43 @@ from this kind of text (sensor logs, chemistry and so on). Per-task scores, the 
 the tuned results are in
 [docs/benchmarks.md](https://github.com/usejul/jul/blob/main/docs/benchmarks.md).
 
+### Decision bench against Jev
+
+The default model, `jul-decision-wemm-4b`, is WeMM-Embedding-4B with LoRA adapters that read the question and
+the text together ([usejul/jul-decision-wemm-4b](https://huggingface.co/usejul/jul-decision-wemm-4b)). The
+decision bench asks it 2,108 typed questions over 12 task families, in English and French, with texts
+written for the bench and never seen in training. PyTorch bf16 on one A10G GPU, one question per call;
+Jev through its API, network included in its latency.
+
+| Family | n | Jev | jul-decision-wemm-4b |
+| --- | ---: | ---: | ---: |
+| emotion | 60 | **0.933** | 0.817 |
+| finance | 180 | 0.756 | **0.850** |
+| hard negatives | 226 | 0.823 | **0.836** |
+| intent | 234 | 0.842 | **0.868** |
+| legal | 158 | **0.911** | 0.873 |
+| moderation | 179 | **0.877** | 0.804 |
+| inference (NLI) | 208 | **0.817** | 0.731 |
+| relational | 101 | **0.941** | 0.921 |
+| routing | 118 | **0.898** | 0.831 |
+| sentiment | 120 | **0.983** | 0.925 |
+| support | 294 | **0.898** | 0.864 |
+| topic | 230 | **0.917** | 0.891 |
+| **Choice** | 917 | **0.924** | 0.883 |
+| **Noul** (yes/no) | 895 | **0.878** | 0.872 |
+| **Score** | 296 | **0.699** | 0.672 |
+| English | 1,254 | **0.871** | 0.862 |
+| French | 854 | **0.876** | 0.829 |
+| **All** | 2,108 | **0.873** | 0.849 |
+| p50 latency | | 655 ms | 97 ms |
+
+A family has 60 to 300 questions, so one row moves by ±4 to ±12 points: read the types and the total
+first. The bench shares its task families and label sets with the training data (not its texts); on the
+four label sets of jul's dev, never trained on, the adapters take Choice from 0.707 to 0.730. Emotion is
+where Jev is furthest ahead, and inference is where the model is weakest. On a Mac (MLX, 4-bit) the adapters are
+not attached yet: the default model reads every question with the vectors, and the Jev benchmark numbers
+above are its numbers.
+
 ### The baseline worth remembering
 
 A TF-IDF + linear SVM, trained on 1000 labeled examples with no LLM at all, scores 0.88 on AG News,
@@ -169,7 +209,8 @@ so update both together.
 
 | Preset | Size | Jev bench, zero-shot | + autotune, 1000 labels | Notes |
 | --- | ---: | ---: | ---: | --- |
-| `wemm-4b-4bit` (default, alias `accurate`) | 2.6 GB | 0.857 | 0.897 | built in |
+| `jul-decision-wemm-4b` (default, alias `accurate`) | 10.3 GB bf16 + 0.07 GB adapters (PyTorch); 2.6 GB (MLX) | 0.857 ² | 0.897 ² | built in; WeMM-Embedding-4B with [LoRA adapters](https://huggingface.co/usejul/jul-decision-wemm-4b) that read Noul, Score and Choice with the question and the text together: [0.849 on the decision bench](#decision-bench-against-jev), Jev 0.873; attached on PyTorch, MLX reads it as `wemm-4b-4bit` for now |
+| `wemm-4b-4bit` | 2.6 GB | 0.857 | 0.897 | built in, vectors only |
 | `minicpm5-2b` (alias `fast`) | 2.7 GB | 0.617 | 0.757 | built in, 64 ms on an M4 Pro |
 | `minicpm5-2b-decision` | 1.3 GB | see [benchmarks](https://github.com/usejul/jul/blob/main/docs/benchmarks.md) | — | trained decision model, `jul models add` |
 | `e5-small` (ONNX, 8-bit) | 0.09 GB | 0.543 | 0.713 (0.790 hybrid head) | encoder, 6 ms per text on an M4 Pro; needs an ONNX export first, see [models](https://github.com/usejul/jul/blob/main/docs/models.md#micro-models-encoders) |
@@ -178,6 +219,9 @@ so update both together.
 
 ¹ Choice questions, the only ones in the Jev benchmark, are read by the vectors of `wemm-4b-4bit`, which the
 adapters leave untouched (switched off, the features are the same): its numbers.
+
+² Measured on MLX, where the default model reads with the vectors of `wemm-4b-4bit`. On PyTorch its Choice
+reading mixes in the adapters; the Jev benchmark has not been rerun there yet.
 
 To use another model, run `jul models add <name> --repo <hf-repo>`. It fits the layer, center and
 temperature on the dev sets. The 18 models we measured, encoders, decision models and every setting

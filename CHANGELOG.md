@@ -3,6 +3,20 @@
 Versions come from git tags (see [publishing](docs/publishing.md)): a `v*` tag releases to PyPI, every push to
 `main` publishes a dev build to TestPyPI.
 
+## Unreleased
+
+### Added
+
+- **`jul-decision-wemm-4b` is the default model** (alias `accurate`): `wemm-4b-4bit` plus LoRA adapters
+  ([`usejul/jul-decision-wemm-4b`](https://huggingface.co/usejul/jul-decision-wemm-4b)) that read Noul,
+  Score and Choice with the question and the text together. Decision bench (2,108 questions, PyTorch): 0.849,
+  Jev 0.873. Attached on PyTorch; on MLX it reads as `wemm-4b-4bit` until the adapters are measured in
+  4-bit. `wemm-4b-4bit` stays, vectors only.
+- LoRA cross models read a Choice listwise when their `cross.json` has a `choice` entry (text, question and
+  every option in one pass), mixed with the vector reading (`mix`).
+- A preset's `cross` entry may name a repo for some backends only (`{"torch": ...}`); the others read with
+  the vectors.
+
 ## 0.3.0 — 2026-09-28
 
 ### Added

@@ -27,6 +27,7 @@ BACKENDS = ("mlx", "torch", "onnx")
 #: Preset name -> repo per backend. A name missing here is used as the repo itself.
 MODELS: dict[str, dict[str, str]] = {
     "wemm-4b-4bit": {"mlx": "usejul/WeMM-Embedding-4B-mlx-4bit", "torch": "tencent/WeMM-Embedding-4B"},
+    "jul-decision-wemm-4b": {"mlx": "usejul/WeMM-Embedding-4B-mlx-4bit", "torch": "tencent/WeMM-Embedding-4B"},
     "minicpm5-2b": {"mlx": "openbmb/MiniCPM5-2B-MLX", "torch": "openbmb/MiniCPM5-2B"},
 }
 

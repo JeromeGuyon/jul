@@ -6,8 +6,9 @@ import json
 import numpy as np
 import pytest
 
+from jul import cross
 from jul.cross import CrossReader, CrossSpec, cut
-from jul.presets import Formulation, Preset
+from jul.presets import Formulation, Preset, resolve
 from jul.types import Choice, Noul, NoulCriteria, Score, options_of
 
 D = 4
@@ -100,6 +101,14 @@ def test_preset_keeps_its_cross_model(tmp_path):
                latency_ms="?", quality="", backend="onnx", onnx_repo="dir", cross={"repo": "cross-dir"})
     assert Preset.from_json(p.to_json(), tmp_path).cross == {"repo": "cross-dir"}
     assert "cross" not in Preset.from_json({**p.to_json(), "cross": None}, tmp_path).to_json()
+
+
+def test_a_cross_model_named_for_some_backends_only():
+    entry = {"repo": {"torch": "usejul/jul-decision-wemm-4b"}}
+    assert cross.covers(entry, "torch") and not cross.covers(entry, "mlx")
+    assert cross.covers({"repo": "some/dir"}, "mlx")
+    default = resolve(None)
+    assert default.cross == entry and default.repos == resolve("wemm-4b-4bit").repos
 
 
 def test_default_method_routes_declared_types_unless_tuned(tmp_path):

@@ -241,11 +241,26 @@ PRESETS: dict[str, Preset] = {
     ),
 }
 
+# WeMM-Embedding-4B read as above, plus LoRA adapters on its own layers (usejul/jul-decision-wemm-4b) that
+# read Noul, Score and Choice with the question and the text in one prompt; a Choice mixes that reading with
+# the vectors (cross.json "mix"). Trained on the bf16 weights: attached on PyTorch only; MLX reads this preset
+# as wemm-4b-4bit (vectors) until the adapters are measured in 4-bit. Decision bench (2,108 questions, typed
+# decisions over 12 task families, PyTorch on an A10G): 0.849, Jev 0.873, the vectors 0.757 (with the first
+# adapters for Noul and Score).
+PRESETS["jul-decision-wemm-4b"] = dataclasses.replace(
+    PRESETS["wemm-4b-4bit"],
+    name="jul-decision-wemm-4b",
+    quality="0.849 on the decision bench (Jev: 0.873) on PyTorch; on MLX, wemm-4b-4bit's 0.857 on the Jev bench",
+    notes="wemm-4b-4bit with LoRA adapters that read the question and the text together (Noul, Score, "
+          "Choice), on PyTorch; one model in memory for both readings.",
+    cross={"repo": {"torch": "usejul/jul-decision-wemm-4b"}},
+)
+
 #: Single-formulation variants, kept because they are what the 'one word' rows of the bench measured.
 ONE_WORD_ONLY: dict[str, tuple[int, float]] = {"minicpm5-2b": (39, 0.04554)}
 
-ALIASES = {"fast": "minicpm5-2b", "accurate": "wemm-4b-4bit"}
-DEFAULT_MODEL = "wemm-4b-4bit"
+ALIASES = {"fast": "minicpm5-2b", "accurate": "jul-decision-wemm-4b"}
+DEFAULT_MODEL = "jul-decision-wemm-4b"
 
 
 def resolve(name: str | None, backend: str | None = None, home: Path | None = None) -> Preset:

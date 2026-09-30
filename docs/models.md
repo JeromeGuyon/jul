@@ -190,6 +190,39 @@ chance, with or without the adapters. That is also why Score barely moves in 4-b
 deadlines, close calls that 4-bit weights flip. Choice questions keep the vectors, so the Jev benchmark
 (0.857 zero-shot) is untouched by construction.
 
+A LoRA cross model can also read a Choice, when its `cross.json` has a `choice` entry: the text, the
+question and every option in one prompt, one pass for any number of options.
+
+```
+Text: "<text>"
+Question: <question>
+Options:
+- <option 1>
+- <option 2>
+Answer:
+```
+
+Each option is read on the newline that closes it (it has seen the text, the question and the options
+before it), the answer on `Answer:`; a bilinear head (`choice_q`, `choice_k` in the heads file) scores
+each option against the answer. jul adds that score to the vector reading, `log p = log p_vector + mix · log
+p_listwise` (`mix` in `cross.json`, 3 for the default model), because each fixes the other's errors: on
+the four label sets of the dev, never trained on, the vectors score 0.707, the listwise reading alone
+0.723 and both 0.730.
+
+`jul-decision-wemm-4b`, the default model, is WeMM-Embedding-4B with such adapters for Noul, Score and
+Choice ([usejul/jul-decision-wemm-4b](https://huggingface.co/usejul/jul-decision-wemm-4b), 65 MB). They
+were trained on the bf16 weights and are attached on PyTorch; on MLX the preset reads as `wemm-4b-4bit`
+until they are measured in 4-bit. Decision bench, PyTorch on an A10G (2,108 questions, 12 task families,
+English and French):
+
+| | All | Choice | Noul | Score | p50 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `wemm-4b-4bit` vectors + the adapters above for Noul and Score | 0.757 | 0.700 | 0.850 | 0.652 | 95 ms |
+| `jul-decision-wemm-4b` | **0.849** | **0.883** | **0.872** | **0.672** | 97 ms |
+| Jev (API) | 0.873 | 0.924 | 0.878 | 0.699 | 655 ms |
+
+Per family: [README](https://github.com/usejul/jul#decision-bench-against-jev).
+
 ## Decision models
 
 A *decision model* is a model trained to answer questions about a state, rather than to write text. It
@@ -225,10 +258,14 @@ the limit in its `decision.json` is truncated rather than stretched.
 
 | Preset                          | Model                               | Layers  |    tau | p50, M4 Pro | p50, M5 Max | Jev bench, zero-shot |
 | ------------------------------- | ----------------------------------- | ------- | -----: | ----------: | ----------: | -------------------- |
-| `wemm-4b-4bit` (alias `accurate`, default) | `usejul/WeMM-Embedding-4B-mlx-4bit` | 31 / 31 | 0.0553 |      146 ms |       55 ms | **0.857**            |
+| `jul-decision-wemm-4b` (alias `accurate`, default) | `usejul/WeMM-Embedding-4B-mlx-4bit` | 31 / 31 | 0.0553 |      146 ms |       55 ms | **0.857** (MLX)      |
+| `wemm-4b-4bit`                  | `usejul/WeMM-Embedding-4B-mlx-4bit` | 31 / 31 | 0.0553 |      146 ms |       55 ms | **0.857**            |
 | `minicpm5-2b` (alias `fast`)    | `openbmb/MiniCPM5-2B-MLX`           | 39 / 40 | 0.0413 |   **64 ms** |             | 0.617                |
 
-`wemm-4b-4bit` is the default because it is the most accurate: 10 points above Jev with no training.
+`wemm-4b-4bit` is the most accurate vector reading: 10 points above Jev with no training. The default,
+`jul-decision-wemm-4b`, is the same preset plus [LoRA adapters](#a-cross-model-on-the-presets-own-weights-lora)
+that read Noul, Score and Choice with the question and the text together; they are attached on PyTorch, and
+on MLX it reads exactly as `wemm-4b-4bit` until they are measured in 4-bit.
 On the same M4 Pro it is 2.3 times slower than `minicpm5-2b`, which stays the fast option.
 
 A third option does not read a general model at all: `minicpm5-2b-decision` is MiniCPM5-2B *trained*

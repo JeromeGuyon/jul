@@ -97,6 +97,13 @@ def find(repo: str) -> dict | None:
     return {"repo": repo, "subfolder": SUBFOLDER}
 
 
+def covers(cross: dict, backend: str) -> bool:
+    """Whether a preset's `cross` entry names a model for `backend` (a {backend: repo} dict may leave some out:
+    that backend then reads every question with the vectors)."""
+    repo = cross["repo"]
+    return bool(repo.get(backend)) if isinstance(repo, dict) else True
+
+
 def location(cross: dict, backend: str) -> Path:
     """The directory a preset's `cross` entry names for `backend` (`repo` may be a {backend: repo} dict)."""
     repo = cross["repo"]

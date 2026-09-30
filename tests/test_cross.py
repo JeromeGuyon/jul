@@ -389,6 +389,7 @@ def test_listwise_choice_reads_every_option_in_one_pass(pair, tmp_path):
             lo.b.zero_()
 
 
+@needs_export
 def test_listwise_choice_needs_its_heads(pair, tmp_path):
     from jul.cross import LoraCrossReader, LoraSpec
     torch_bb, _ = pair

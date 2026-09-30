@@ -1,4 +1,4 @@
-"""jul — Juste Un LLM: local typed decisions, with the interface of the TypeSafe (Jev) Python SDK.
+"""jul — Just use Less: local typed decisions, with the interface of the TypeSafe (Jev) Python SDK.
 
 Swap the import and existing code keeps working:
 

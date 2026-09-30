@@ -1,6 +1,6 @@
 <div align="center">
 
-# JuL — Juste un LLM
+# JuL — Just use Less
 
 **Typed decisions on your machine, with the model of your choice.<br>No training, no API, no task learned by heart.**
 

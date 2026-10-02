@@ -175,19 +175,30 @@ class LLaDABackbone(Backbone):
         super().__init__(name)
         self.device, dtype = _device_dtype(device, dtype)
         self.tokenizer = AutoTokenizer.from_pretrained(self.repo, trust_remote_code=True)
-        # LLaDA is an AutoModel (masked LM head lives on the base model), loaded with remote code.
-        # JUL_LLADA_DEVICE_MAP=auto shards a large model (e.g. LLaDA2.0-mini 32.5 GB) across all GPUs
-        # via accelerate; in that mode we must NOT call .to(device) (accelerate owns placement).
+        # Load the LM head variant so forward().logits is over the full vocabulary. LLaDA2.0 separates
+        # the base model (AutoModel -> LLaDA2MoeModel, no head, hidden-sized output) from the LM
+        # (AutoModelForCausalLM -> LLaDA2MoeModelLM, with lm_head). The dense LLaDA-8B's ForCausalLM
+        # also exposes .logits, so prefer ForCausalLM and fall back to AutoModel only if unavailable.
+        # JUL_LLADA_DEVICE_MAP=auto shards a large model across all GPUs via accelerate; in that mode
+        # we must NOT call .to(device) (accelerate owns placement).
         device_map = os.environ.get("JUL_LLADA_DEVICE_MAP") or None
+
         def _load(**kw):
-            if device_map:
-                m = AutoModel.from_pretrained(self.repo, trust_remote_code=True,
-                                              device_map=device_map, **kw).eval()
-                # reads should feed inputs to the first shard's device
-                self.device = next(m.parameters()).device
-                return m
-            return AutoModel.from_pretrained(self.repo, trust_remote_code=True,
-                                             **kw).to(self.device).eval()
+            from transformers import AutoModelForCausalLM
+            loaders = [AutoModelForCausalLM, AutoModel]
+            last = None
+            for Loader in loaders:
+                try:
+                    if device_map:
+                        m = Loader.from_pretrained(self.repo, trust_remote_code=True,
+                                                   device_map=device_map, **kw).eval()
+                        self.device = next(m.parameters()).device
+                        return m
+                    return Loader.from_pretrained(self.repo, trust_remote_code=True,
+                                                  **kw).to(self.device).eval()
+                except (ValueError, KeyError) as e:
+                    last = e  # this repo may not register one of the auto classes; try the next
+            raise last
         with _patch_remote_code_for_transformers5(self.repo):
             try:
                 self.model = _load(torch_dtype=dtype)
@@ -214,6 +225,20 @@ class LLaDABackbone(Backbone):
     def encode(self, text: str) -> list[int]:
         return self.tokenizer.encode(text, add_special_tokens=False)
 
+    def _attn_mask(self, ids):
+        """Attention mask for the forward. LLaDA2.0 (llada2_moe) requires a 4D block mask of shape
+        (batch, 1, seq, seq); being a bidirectional diffusion LM, every position attends to every
+        other, so the block is all-ones. The dense LLaDA-8B needs no mask (its forward tolerates None),
+        so we return None there to keep the original behaviour.
+        """
+        mtype = str(getattr(self.model.config, "model_type", "")).lower()
+        if "llada2" in mtype or "llada2_moe" in mtype:
+            L = ids.shape[1]
+            # SDPA's _prepare_4d path wants a FLOAT block mask (1.0 = attend); full-ones = full
+            # bidirectional attention for this diffusion LM.
+            return torch.ones((ids.shape[0], 1, L, L), dtype=self.model.dtype, device=ids.device)
+        return None
+
     @torch.inference_mode()
     def mask_logits(self, tokens: list[int], mask_positions: list[int]) -> np.ndarray:
         """One forward pass over `tokens`; return the vocabulary logits at each mask position.
@@ -223,7 +248,10 @@ class LLaDABackbone(Backbone):
         a typed decision needs (the option distribution is read straight from the masked position).
         """
         ids = torch.tensor([tokens], dtype=torch.long, device=self.device)
-        out = self.model(input_ids=ids)
+        # LLaDA2.0 (llada2_moe) requires an explicit attention_mask; all-ones = attend every token
+        # (no padding on a single sequence). The dense 8B accepts it harmlessly.
+        attn = self._attn_mask(ids)
+        out = self.model(input_ids=ids, attention_mask=attn)
         logits = out.logits if hasattr(out, "logits") else out[0]  # (1, T, vocab)
         rows = torch.tensor(mask_positions, device=logits.device)
         picked = logits[0, rows].float().cpu().numpy()
@@ -243,7 +271,8 @@ class LLaDABackbone(Backbone):
         array.
         """
         ids = torch.tensor([tokens], dtype=torch.long, device=self.device)
-        out = self.model(input_ids=ids, output_hidden_states=True)
+        attn = self._attn_mask(ids)
+        out = self.model(input_ids=ids, attention_mask=attn, output_hidden_states=True)
         hs = out.hidden_states[-1] if getattr(out, "hidden_states", None) is not None else None
         if hs is None:
             raise RuntimeError("backbone did not return hidden_states; cannot use a learned head")

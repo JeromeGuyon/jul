@@ -14,6 +14,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "lib"))
 sys.path.insert(0, str(ROOT / "cli"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 SLOW = os.environ.get("JUL_SLOW") == "1"
 

@@ -56,8 +56,8 @@ version_file = "lib/jul/_version.py"
 local_scheme = "no-local-version"
 
 [tool.setuptools]
-package-dir = {"jul" = "lib/jul", "jul.backends" = "lib/jul/backends", "jul.lab" = "lib/jul/lab", "jul_cli" = "cli/jul_cli"}
-packages = ["jul", "jul.backends", "jul.lab", "jul_cli"]
+package-dir = {"jul" = "lib/jul", "jul.backends" = "lib/jul/backends", "jul.lab" = "lib/jul/lab", "jul.vendor" = "lib/jul/vendor", "jul_cli" = "cli/jul_cli"}
+packages = ["jul", "jul.backends", "jul.lab", "jul.vendor", "jul_cli"]
 
 [tool.setuptools.package-data]
 jul = ["assets/*.npy", "assets/*.json", "assets/presets/*", "py.typed"]

@@ -10,7 +10,7 @@ trained head on that hidden state instead of the vocab logits.
 Heads (all consume the last-layer hidden state h ∈ R^D at the [MASK]):
   - choice : bilinear pointer. Query q = Wq·h; each option's key k_i = We·emb(anchor_id_i); the option
              logit is q·k_i / sqrt(d). Works for any option count, like a pointer head.
-  - noul   : a 2-logit linear head on h (yes/no).
+  - noul   : a 2-logit linear head on h (yes/no), in jul's option order ([true, false]).
   - score  : an ordinal head — K level logits on h, trained with the Gaussian ordinal target so the
              scale is treated as ordered, not as unordered classes.
 
@@ -44,7 +44,7 @@ class ReadHead(nn.Module):
         return (k @ q) / (self.proj ** 0.5)             # (n,)
 
     def noul_logits(self, h: torch.Tensor) -> torch.Tensor:
-        return self.noul(h)                             # (2,) order [false, true]
+        return self.noul(h)                             # (2,) in jul's option order: [true, false]
 
     def score_logits(self, h: torch.Tensor, n: int) -> torch.Tensor:
         return self.score(h)[:n]                         # (n,)
@@ -68,7 +68,7 @@ def head_loss(head: ReadHead, h: torch.Tensor, ex, device, sigma: float = 1.0) -
         logits = head.choice_logits(h, anchor_ids)
         return F.cross_entropy(logits.unsqueeze(0), torch.tensor([gold], device=device))
     if kind == "noul":
-        logits = head.noul_logits(h)                    # [false, true]
+        logits = head.noul_logits(h)                    # option order; gold_index is in option order too
         return F.cross_entropy(logits.unsqueeze(0), torch.tensor([gold], device=device))
     # score: ordinal soft target
     n = len(ex.anchor_ids)

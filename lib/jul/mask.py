@@ -449,8 +449,10 @@ class MaskReader:
                 z = self.head.choice_logits(h, torch.tensor(anchors, device=dev)).float().cpu().numpy()
                 z = self._to_option_order(kind, options, z)
             elif kind == "noul":
-                raw = self.head.noul_logits(h).float().cpu().numpy()  # [false, true]
-                z = self._to_option_order(kind, options, raw)
+                # The head is trained with gold_index in jul's option order (options_of(Noul) =
+                # [true, false], see llada_train.build_example), so its logits are already in option
+                # order: no [false, true] remap here (that remap flipped every learned-head answer).
+                z = self.head.noul_logits(h).float().cpu().numpy()
             else:  # score
                 z = self.head.score_logits(h, len(options)).float().cpu().numpy()
         return z / self.spec.temperature, len(tokens)

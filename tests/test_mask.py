@@ -333,3 +333,30 @@ def test_auto_ce_keeps_choice_on_anchor():
     assert calls["noul"] == 1                                     # noul uses the yes/no readout
     r.logits("t", [("score", "q", options_of(Score(instructions="q", criteria=["lo", "mid", "hi"])))])
     assert calls["multitoken"] == 1                              # score uses the sequence-likelihood readout
+
+
+def test_learned_head_noul_reads_back_the_trained_answer():
+    """Regression: a head trained on gold=true (gold_index in jul's option order, as train_entry.py
+    builds it) must read P(true) high at inference. The old [false, true] remap in _head_scores
+    flipped every learned-head noul answer."""
+    torch = pytest.importorskip("torch")
+    import llada_head as LH
+    import llada_train as LT
+
+    torch.manual_seed(0)
+    reader = _reader()
+    hidden = 8
+    h = torch.ones(hidden)
+    reader.backbone.mask_hidden = lambda tokens, positions: h.numpy()[None, :]
+    head = LH.ReadHead(hidden=hidden, emb=torch.nn.Embedding(16, hidden), proj=4)
+    opts = options_of(Noul(instructions="Is it raining?"))
+    keys = [o.key for o in opts]
+    opt = torch.optim.SGD(head.parameters(), lr=0.5)
+    ex = LT.build_example(reader, "noul", "Is it raining?", opts, "state", keys.index("true"))
+    for _ in range(100):
+        loss = LH.head_loss(head, h, ex, "cpu")
+        opt.zero_grad(); loss.backward(); opt.step()
+    reader.head = head.eval()
+    z, _ = reader._head_scores("noul", "state", "Is it raining?", opts)
+    p = np.exp(z - z.max()); p /= p.sum()
+    assert p[keys.index("true")] > 0.9

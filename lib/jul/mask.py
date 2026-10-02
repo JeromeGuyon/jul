@@ -158,17 +158,10 @@ class MaskReader:
             self._load_head(head_path)
 
     def _load_head(self, head_path: str):
-        import json as _json
-        import torch
-        import sys
-        sys.path.insert(0, os.path.dirname(head_path) or ".")
-        from llada_head import ReadHead
-        meta = _json.load(open(os.path.join(os.path.dirname(head_path), "read_head.json")))
-        emb = self.backbone.model.get_input_embeddings()
-        head = ReadHead(hidden=meta["hidden"], emb=emb, proj=meta["proj"],
-                        max_levels=meta.get("max_levels", 16))
-        head.load_state_dict(torch.load(head_path, map_location="cpu"), strict=False)
-        head.eval()
+        from .llada_head import load_head
+        with open(os.path.join(os.path.dirname(head_path), "read_head.json")) as f:
+            meta = json.load(f)
+        head = load_head(head_path, self.backbone.model.get_input_embeddings(), meta)
         dev = getattr(self.backbone, "device", "cpu")
         mdl_dtype = next(self.backbone.model.parameters()).dtype
         self.head = head.to(device=dev, dtype=mdl_dtype)

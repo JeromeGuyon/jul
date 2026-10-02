@@ -44,7 +44,6 @@ def make_source_tar(pin: str = "") -> bytes:
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         tar.add(os.path.join(HERE, "dbench_entry.py"), arcname="dbench_entry.py")
-        tar.add(os.path.join(REPO, "scripts", "llada_head.py"), arcname="llada_head.py")
         tar.add(os.path.join(REPO, "lib", "jul"), arcname="lib/jul")
         tar.add(DBENCH_PKG, arcname="dbench_src/decision_bench")
         info = tarfile.TarInfo("requirements.txt"); info.size = len(reqs)

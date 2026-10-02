@@ -28,6 +28,7 @@ one experiment this backend exists for. Those raise NotImplementedError with a c
 
 from __future__ import annotations
 
+import contextlib
 import os
 
 import numpy as np
@@ -73,7 +74,8 @@ def _guess_mask_id(repo: str, tokenizer, config=None) -> int:
     )
 
 
-def _patch_remote_code_for_transformers5(repo: str) -> None:
+@contextlib.contextmanager
+def _patch_remote_code_for_transformers5(repo: str):
     """LLaDA's published remote code predates transformers 5.x. Fill in attributes 5.x expects.
 
     LLaDA-8B-Instruct ships `modeling_llada.LLaDAModelLM`, written for transformers ~4.4x. Loading it
@@ -85,7 +87,12 @@ def _patch_remote_code_for_transformers5(repo: str) -> None:
 
     Also makes transformers 5.x's ROPE_INIT_FUNCTIONS tolerant of a missing/renamed rope_type (the
     LLaDA-MoE remote code indexes it with a key 5.x may not ship as-is).
+
+    A context manager: wrap the `from_pretrained` call. The `"default"` RoPE entry is a process-global
+    registry change, so it is removed again on exit (the remote code reads it while building the
+    model); other models loaded later in the same process see the registry unchanged.
     """
+    added_default = False
     try:
         from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
         # transformers 5.x dropped the "default" entry from ROPE_INIT_FUNCTIONS (the plain-RoPE
@@ -119,28 +126,39 @@ def _patch_remote_code_for_transformers5(repo: str) -> None:
                 # (inv_freq, attention_scaling); scaling is 1.0 for plain RoPE.
                 return inv.to(device), 1.0
             ROPE_INIT_FUNCTIONS["default"] = _plain_default
-    except Exception:
-        pass
+            added_default = True
+    except ImportError:
+        pass  # transformers without modeling_rope_utils: nothing to register
+    # Safe to unregister after loading: the remote RotaryEmbedding classes resolve
+    # ROPE_INIT_FUNCTIONS[rope_type] once in __init__ and keep the function on the instance.
+    try:
+        _patch_llada_classes(repo)
+        yield
+    finally:
+        if added_default:
+            ROPE_INIT_FUNCTIONS.pop("default", None)
+
+
+def _patch_llada_classes(repo: str) -> None:
+    """Give LLaDA's own remote classes the attributes transformers 5.x expects (scoped to them)."""
     try:
         from transformers.dynamic_module_utils import get_class_from_dynamic_module
-    except Exception:
+    except ImportError:
         return
     for ref in ("modeling_llada.LLaDAModelLM", "modeling_lladamoe.LLaDAMoEModelLM"):
         try:
             cls = get_class_from_dynamic_module(ref, repo)
-        except Exception:
+        except Exception:  # noqa: BLE001 - best effort: this repo does not ship that class
             continue
         if not hasattr(cls, "all_tied_weights_keys"):
             # LLaDA ties nothing beyond its own `_tied_weights_keys`; an empty mapping satisfies 5.x.
             cls.all_tied_weights_keys = {}
         # 5.x calls tie_weights(missing_keys=..., recompute_mapping=...); LLaDA's takes no kwargs.
+        # Drop the 5.x kwargs, but let any real error from LLaDA's tie_weights propagate.
         _orig_tie = cls.tie_weights
         if getattr(_orig_tie, "_jul_wrapped", False) is False:
-            def _tie_weights(self, *a, **k):  # noqa: ANN001
-                try:
-                    return _orig_tie(self)
-                except TypeError:
-                    return None
+            def _tie_weights(self, *a, _orig=_orig_tie, **k):  # noqa: ANN001
+                return _orig(self)
             _tie_weights._jul_wrapped = True
             cls.tie_weights = _tie_weights
 
@@ -157,7 +175,6 @@ class LLaDABackbone(Backbone):
         super().__init__(name)
         self.device, dtype = _device_dtype(device, dtype)
         self.tokenizer = AutoTokenizer.from_pretrained(self.repo, trust_remote_code=True)
-        _patch_remote_code_for_transformers5(self.repo)
         # LLaDA is an AutoModel (masked LM head lives on the base model), loaded with remote code.
         # JUL_LLADA_DEVICE_MAP=auto shards a large model (e.g. LLaDA2.0-mini 32.5 GB) across all GPUs
         # via accelerate; in that mode we must NOT call .to(device) (accelerate owns placement).
@@ -171,10 +188,11 @@ class LLaDABackbone(Backbone):
                 return m
             return AutoModel.from_pretrained(self.repo, trust_remote_code=True,
                                              **kw).to(self.device).eval()
-        try:
-            self.model = _load(torch_dtype=dtype)
-        except TypeError:
-            self.model = _load(dtype=dtype)
+        with _patch_remote_code_for_transformers5(self.repo):
+            try:
+                self.model = _load(torch_dtype=dtype)
+            except TypeError:
+                self.model = _load(dtype=dtype)
         # Optional: load a LoRA adapter trained at the [MASK] readout (Option 2), for the gate.
         adapter = os.environ.get("JUL_LLADA_ADAPTER")
         if adapter and os.path.isdir(adapter):

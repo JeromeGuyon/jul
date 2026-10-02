@@ -57,7 +57,6 @@ def make_source_tar(pin: str = "") -> bytes:
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         tar.add(os.path.join(HERE, "train_entry.py"), arcname="train_entry.py")
         tar.add(os.path.join(REPO, "scripts", "llada_train.py"), arcname="llada_train.py")
-        tar.add(os.path.join(REPO, "scripts", "llada_head.py"), arcname="llada_head.py")
         tar.add(os.path.join(REPO, "scripts", "moe_lora.py"), arcname="moe_lora.py")
         tar.add(os.path.join(REPO, "lib", "jul"), arcname="lib/jul")
         info = tarfile.TarInfo("requirements.txt"); info.size = len(reqs)

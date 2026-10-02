@@ -88,13 +88,13 @@ def main():
           f"lora_r={args.lora_r} alpha={args.lora_alpha} lr={args.lr} epochs={args.epochs}", flush=True)
 
     tok = AutoTokenizer.from_pretrained(args.base, trust_remote_code=True)
-    _patch_remote_code_for_transformers5(args.base)
     dtype = torch.bfloat16 if device == "cuda" else torch.float32
     # transformers 4.53 (the LLaDA-MoE pin) expects torch_dtype=; 5.x renamed it dtype=. Try both.
-    try:
-        model = AutoModel.from_pretrained(args.base, trust_remote_code=True, torch_dtype=dtype)
-    except TypeError:
-        model = AutoModel.from_pretrained(args.base, trust_remote_code=True, dtype=dtype)
+    with _patch_remote_code_for_transformers5(args.base):
+        try:
+            model = AutoModel.from_pretrained(args.base, trust_remote_code=True, torch_dtype=dtype)
+        except TypeError:
+            model = AutoModel.from_pretrained(args.base, trust_remote_code=True, dtype=dtype)
     try:
         _ = model.config.use_cache
     except AttributeError:
@@ -167,7 +167,7 @@ def main():
     # Optional learned read head on the [MASK] hidden state (DiffEmbed-style), trained jointly with LoRA.
     head = None
     if args.head:
-        import llada_head as LH
+        from jul import llada_head as LH
         in_emb = model.get_input_embeddings()
         hidden = model.config.hidden_size if hasattr(model.config, "hidden_size") else in_emb.embedding_dim
         head = LH.ReadHead(hidden=hidden, emb=in_emb, proj=args.head_proj)

@@ -39,7 +39,8 @@ from ..backbone import Backbone
 from .torch import _device_dtype
 
 #: Fallback mask-token id per known model family, when the tokenizer has no single mask special token.
-MASK_IDS = {"llada-moe": 156895, "llada": 126336, "illada": 5}
+#: Matched by substring in this order: "illada" must come before "llada", which it contains.
+MASK_IDS = {"llada-moe": 156895, "illada": 5, "llada": 126336}
 #: Env override, e.g. JUL_LLADA_MASK_ID=5 for iLLaDA.
 MASK_ID_ENV = "JUL_LLADA_MASK_ID"
 
@@ -60,9 +61,11 @@ def _guess_mask_id(repo: str, tokenizer, config=None) -> int:
         mid = tokenizer.convert_tokens_to_ids(mask_tok)
         if isinstance(mid, int) and mid >= 0:
             return mid
-    for tok in ("<|mdm_mask|>", "<|mask|>", "[MASK]"):
+    for tok in ("<|mdm_mask|>", "<|mask|>", "<[MASK]>", "[MASK]"):
         mid = tokenizer.convert_tokens_to_ids(tok)
-        if isinstance(mid, int) and mid >= 0 and mid != tokenizer.unk_token_id:
+        # Round-trip: a tokenizer without a declared unk_token can still map unknown strings to UNK.
+        if (isinstance(mid, int) and mid >= 0 and mid != tokenizer.unk_token_id
+                and tokenizer.convert_ids_to_tokens(mid) == tok):
             return mid
     low = repo.lower()
     for family, mid in MASK_IDS.items():

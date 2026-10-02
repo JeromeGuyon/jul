@@ -150,6 +150,15 @@ to a `read_head.pt` (eval harness auto-exports it when the adapter tar contains 
    are the weights public on HF? what are its numbers? If public, it is the best "same-architecture,
    better backbone" candidate WITHOUT the MoE latency trap. Preset slot exists: `illada-8b-instruct`
    (`GSAI-ML/iLLaDA-8B-Instruct`, mask_id 5) in `lib/jul/backbone.py` — confirm the real repo id.
+   **CHECKED 2026-10-02:** weights public, Apache-2.0, not gated, repo id confirmed (sha `5769f04`).
+   Dense 7.62B, GQA 8 KV heads, vocab 155136, tied embeddings, BF16 ~16.5 GB (fits 1×A10G).
+   Instruct: MMLU 71.6 (vs 65.5 LLaDA), MMLU-Pro 52.3 (vs 37.0), MMLU-Redux 76.4 (vs 68.9).
+   `<[MASK]>` = id 5; `config.mask_token_id` absent, tokenizer declares no mask/unk token. Remote code
+   `ILLaDAForCausalLM` (both auto classes), attention_mask optional, saved with transformers 4.57.1.
+   Silent bugs found and fixed before any GPU job: `_guess_mask_id` returned 3 (UNK) for iLLaDA, and
+   `launch_dbench --mask-id` defaulted to 126336 (a valid token in iLLaDA's vocab) → now 5. Both
+   launchers pin 4.57.1 for iLLaDA (tied lm_head under unpinned 5.x is a risk). Still unmeasured:
+   latency (expected ≈ dense 8B) and whether the chat template's think tokens disturb the readout.
 3. **Listwise choice head** (dense, cheap, same forward): key = hidden state at EACH option's marker
    position (sees the option text), not the letter embedding. This is the only honest test of "does the
    reading block choice?" — the bilinear-on-letter head failed exactly there (choice −2.7). If this does

@@ -88,7 +88,8 @@ def main():
     ap.add_argument("--max-run", type=int, default=3600 * 6)
     ap.add_argument("--transformers-pin", default=None,
                     help="pin transformers in the DLC. Default: 4.53.3 for a MoE base (its remote "
-                         "code needs it), none for dense LLaDA-8B (loads on the DLC's 5.x via the shim).")
+                         "code needs it), 4.57.1 for iLLaDA (its saved version), none for dense "
+                         "LLaDA-8B (loads on the DLC's 5.x via the shim).")
     ap.add_argument("--spot", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
@@ -96,7 +97,9 @@ def main():
         args.lora_alpha = 2 * args.lora_r
     # auto-select the transformers pin from the base unless the user forces one
     if args.transformers_pin is None:
-        args.transformers_pin = DEFAULT_MOE_PIN if "moe" in args.base.lower() else ""
+        base_l = args.base.lower()
+        args.transformers_pin = ("4.57.1" if "illada" in base_l
+                                 else DEFAULT_MOE_PIN if "moe" in base_l else "")
 
     sess = boto3.Session(region_name=REGION)
     s3 = sess.client("s3"); sm = sess.client("sagemaker")

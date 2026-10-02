@@ -92,6 +92,28 @@ def test_transformers_patch_is_scoped_to_the_load():
     assert ("default" in rope.ROPE_INIT_FUNCTIONS) == had
 
 
+def test_illada_mask_id_is_5_not_the_llada_one(monkeypatch):
+    from jul.backends.llada import MASK_ID_ENV, _guess_mask_id
+
+    class _Tok:
+        """iLLaDA-like: <[MASK]> = 5, no declared mask/unk token, unknown strings map to UNK (3)."""
+        mask_token = None; unk_token_id = None
+        vocab = {"<[UNK]>": 3, "<[MASK]>": 5}
+        def convert_tokens_to_ids(s, t):
+            return s.vocab.get(t, 3)
+        def convert_ids_to_tokens(s, i):
+            return {v: k for k, v in s.vocab.items()}[i]
+
+    class _Cfg:
+        mask_token_id = None
+
+    monkeypatch.delenv(MASK_ID_ENV, raising=False)
+    assert _guess_mask_id("GSAI-ML/iLLaDA-8B-Instruct", _Tok(), _Cfg()) == 5
+    _Tok.vocab = {"<[UNK]>": 3}
+    assert _guess_mask_id("GSAI-ML/iLLaDA-8B-Instruct", _Tok(), _Cfg()) == 5
+    assert _guess_mask_id("GSAI-ML/LLaDA-8B-Instruct", _Tok(), _Cfg()) == 126336
+
+
 def test_decontaminate_mapika_runs(tmp_path):
     bench = tmp_path / "data"; bench.mkdir()
     (bench / "bench-v1.jsonl").write_text(json.dumps({"state": "the bench state that must not leak"}) + "\n")

@@ -57,7 +57,7 @@ def main():
     ap.add_argument("--suite", choices=["quick", "full", "edge"], default="quick")
     ap.add_argument("--readout", default="auto", choices=["anchor", "multitoken", "auto", "auto-ce"])
     ap.add_argument("--adapter", default="", help="S3 URI of a LoRA adapter model.tar.gz")
-    ap.add_argument("--mask-id", default="126336")
+    ap.add_argument("--mask-id", default=None, help="default: 5 for iLLaDA, 126336 otherwise")
     ap.add_argument("--instance", default="ml.g5.2xlarge")
     ap.add_argument("--region", default=REGION, help="override region (e.g. us-east-1 for capacity)")
     ap.add_argument("--image", default=None, help="DLC image URI (else derived from region)")
@@ -78,7 +78,13 @@ def main():
     BUCKET_L = bucket
     job = f"jul-llada-dbench-{args.suite}-{int(time.time())}"
     prefix = f"jul-dbench/{job}"
-    pin = "4.57.1" if "llada2" in args.model.lower() else (DEFAULT_MOE_PIN if "moe" in args.model.lower() else "")
+    model_l = args.model.lower()
+    if args.mask_id is None:
+        args.mask_id = "5" if "illada" in model_l else "126336"
+    # iLLaDA's remote code is saved with 4.57.1 and ties lm_head to the embedding: an unpinned 5.x
+    # load risks an untied (random) lm_head, so it gets the same pin as llada2.
+    pin = ("4.57.1" if "llada2" in model_l or "illada" in model_l
+           else (DEFAULT_MOE_PIN if "moe" in model_l else ""))
 
     print(f"PLAN: job={job} model={args.model} suite={args.suite} readout={args.readout} pin={pin or 'none'}")
     if args.dry_run:

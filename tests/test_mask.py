@@ -340,8 +340,8 @@ def test_learned_head_noul_reads_back_the_trained_answer():
     builds it) must read P(true) high at inference. The old [false, true] remap in _head_scores
     flipped every learned-head noul answer."""
     torch = pytest.importorskip("torch")
-    import llada_head as LH
-    import llada_train as LT
+    from types import SimpleNamespace
+    from jul import llada_head as LH
 
     torch.manual_seed(0)
     reader = _reader()
@@ -352,7 +352,7 @@ def test_learned_head_noul_reads_back_the_trained_answer():
     opts = options_of(Noul(instructions="Is it raining?"))
     keys = [o.key for o in opts]
     opt = torch.optim.SGD(head.parameters(), lr=0.5)
-    ex = LT.build_example(reader, "noul", "Is it raining?", opts, "state", keys.index("true"))
+    ex = SimpleNamespace(kind="noul", gold_index=keys.index("true"), anchor_ids=())
     for _ in range(100):
         loss = LH.head_loss(head, h, ex, "cpu")
         opt.zero_grad(); loss.backward(); opt.step()

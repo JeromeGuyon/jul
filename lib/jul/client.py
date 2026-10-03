@@ -122,6 +122,17 @@ class TypeSafeClient:
         shared: dict[int, np.ndarray] = {}
         answers, tokens = {}, 0
 
+        if getattr(engine, "mask", None) is not None:
+            # A masked-diffusion model (LLaDA) reads each question at a single [MASK], one forward pass,
+            # no trained head and no decode loop. Same calibration path as the pointer reader.
+            items = [(_kind_of(q), q.instructions, options_of(q)) for q in questions.values()]
+            logits, tokens = engine.mask.logits(state, items)
+            for (name, question), (kind, _, options), z in zip(questions.items(), items, logits):
+                answers[name] = _format(kind, question, options,
+                                        self._calibrated(ctx, kind, question, options, z))
+            return SystemOneResponse(answers={n: answers[n] for n in questions}, model=self._preset.name,
+                                     usage=Usage(input_tokens=tokens), request_id=str(uuid.uuid4()))
+
         if engine.pointer is not None:
             # A decision model reads the raw state in its own format, once for all the questions. Beyond
             # `route_above` options the pointer head costs more latency than it earns,

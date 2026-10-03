@@ -44,6 +44,11 @@ def test_presets_are_aliased_and_unknown_names_are_refused():
 def test_every_preset_carries_a_layer_and_a_temperature():
     for preset in PRESETS.values():
         assert preset.tau > 0
+        # mask/pointer presets read a model natively (no formulations, no layer); the layer/formulation
+        # invariant is specific to the vector method.
+        if preset.method != "vector":
+            assert not preset.formulations
+            continue
         assert preset.formulations and all(f.layer > 0 for f in preset.formulations)
         assert preset.center in {"generic", "options", "none"}
 

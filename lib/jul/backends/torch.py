@@ -21,7 +21,11 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
-from transformers.cache_utils import DynamicCache, DynamicLayer
+from transformers.cache_utils import DynamicCache
+try:
+    from transformers.cache_utils import DynamicLayer
+except ImportError:  # transformers < 5.x has no DynamicLayer (e.g. the 4.53 pin used for LLaDA-MoE)
+    DynamicLayer = None
 
 from .. import encoder
 from ..backbone import Backbone, with_prefix
@@ -89,6 +93,8 @@ class _Prefix:
 
 
 def _croppable(cache) -> bool:
+    if DynamicLayer is None:  # older transformers: fall back to the cache type check alone
+        return type(cache) is DynamicCache
     return type(cache) is DynamicCache and all(type(layer) is DynamicLayer for layer in cache.layers)
 
 

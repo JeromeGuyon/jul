@@ -22,13 +22,23 @@ from pathlib import Path
 import numpy as np
 
 #: onnx is never picked by default: it reads a model exported for it (jul/backends/onnx_export.py).
-BACKENDS = ("mlx", "torch", "onnx")
+#: llada is never picked by default either: it is a masked-diffusion backbone read at [MASK]
+#: (jul/backends/llada.py), selected explicitly via JUL_BACKEND=llada or a preset's backend.
+#: mlx_llada is the Apple-Silicon (mlx_lm) counterpart of llada, for the MLX LLaDA2-MoE conversions.
+BACKENDS = ("mlx", "torch", "onnx", "llada", "mlx_llada")
 
 #: Preset name -> repo per backend. A name missing here is used as the repo itself.
 MODELS: dict[str, dict[str, str]] = {
     "wemm-4b-4bit": {"mlx": "usejul/WeMM-Embedding-4B-mlx-4bit", "torch": "tencent/WeMM-Embedding-4B"},
     "jul-decision-wemm-4b": {"mlx": "usejul/WeMM-Embedding-4B-mlx-4bit", "torch": "tencent/WeMM-Embedding-4B"},
     "minicpm5-2b": {"mlx": "openbmb/MiniCPM5-2B-MLX", "torch": "openbmb/MiniCPM5-2B"},
+    # masked-diffusion (LLaDA) presets, read at [MASK] on the 'llada' backend (jul/backends/llada.py).
+    "llada-8b-instruct": {"llada": "GSAI-ML/LLaDA-8B-Instruct"},
+    "illada-8b-instruct": {"llada": "GSAI-ML/iLLaDA-8B-Instruct"},
+    "llada-moe-instruct": {"llada": "inclusionAI/LLaDA-MoE-7B-A1B-Instruct"},
+    "llada2-mini-instruct": {"llada": "inclusionAI/LLaDA2.0-mini"},
+    # MLX (Apple Silicon) conversion of the LLaDA2-MoE diffusion model, read at [MASK].
+    "llada2-mini-4bit": {"mlx_llada": "mlx-community/LLaDA2.0-mini-preview-4bit"},
 }
 
 #: Size of a group in `PromptTemplate.run_batch`: rows x longest prompt (cached prefix included).
@@ -94,6 +104,10 @@ class Backbone:
                 from .backends.mlx import MLXBackbone as cls
             elif backend == "onnx":
                 from .backends.onnx import ONNXBackbone as cls
+            elif backend == "llada":
+                from .backends.llada import LLaDABackbone as cls
+            elif backend == "mlx_llada":
+                from .backends.mlx_llada import MLXLLaDABackbone as cls
             else:
                 from .backends.torch import torch_class
                 cls = torch_class(repo_for(name, "torch"))  # noqa: PLW0642

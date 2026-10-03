@@ -55,6 +55,8 @@ class Preset:
     notes: str = ""
     torch_repo: str | None = None  # transformers repo; None: no torch backend for this preset
     onnx_repo: str | None = None   # directory written by jul.backends.onnx_export; None: no onnx
+    llada_repo: str | None = None  # masked-diffusion (LLaDA) repo for backend 'llada'; None: no llada
+    mlx_llada_repo: str | None = None  # MLX (mlx_lm) LLaDA2 repo for backend 'mlx_llada'; None: no mlx_llada
     #: (layer, tau) of the single-formulation "one word" variant; None: see ONE_WORD_ONLY.
     one_word: tuple[int, float] | None = None
     #: The backend the numbers were fitted on; None for the built-in presets (MLX).
@@ -81,7 +83,9 @@ class Preset:
     def repos(self) -> dict[str, str]:
         return {**({"mlx": self.repo} if self.repo else {}),
                 **({"torch": self.torch_repo} if self.torch_repo else {}),
-                **({"onnx": self.onnx_repo} if self.onnx_repo else {})}
+                **({"onnx": self.onnx_repo} if self.onnx_repo else {}),
+                **({"llada": self.llada_repo} if self.llada_repo else {}),
+                **({"mlx_llada": self.mlx_llada_repo} if self.mlx_llada_repo else {})}
 
     def generic_center(self, formulation: Formulation, backend: str = "mlx") -> np.ndarray | None:
         """The asset fitted with this backend's weights, else the MLX one."""
@@ -108,7 +112,8 @@ class Preset:
     def from_json(cls, d: dict, asset_dir: Path) -> "Preset":
         repos = d["repos"]
         return cls(name=d["name"], repo=repos.get("mlx", ""), torch_repo=repos.get("torch"),
-                   onnx_repo=repos.get("onnx"),
+                   onnx_repo=repos.get("onnx"), llada_repo=repos.get("llada"),
+                   mlx_llada_repo=repos.get("mlx_llada"),
                    formulations=tuple(Formulation(**f) for f in d["formulations"]),
                    tau=d["tau"], center=d["center"],
                    one_word=tuple(d["one_word"]) if d.get("one_word") else None,
@@ -183,6 +188,19 @@ def pointer_preset(name: str, repo: str, backend: str) -> Preset:
                   notes=f"format and temperature ({spec.temperature:.3f}) read from {repo}/decision.json")
 
 
+def mask_preset(name: str, repo: str) -> Preset:
+    """A masked-diffusion model (LLaDA) read at [MASK] (method='mask'), backend 'llada'.
+
+    Nothing to fit: the reading is native (the option distribution is the masked-position softmax).
+    A `decision.json` in the repo tunes the prompt/markers/temperature; otherwise MaskSpec.default().
+    `repo` is stored under the 'llada' backend so `Backbone(name, 'llada')` loads it.
+    """
+    return Preset(name=name, repo="", backend="llada", formulations=(), tau=1.0,
+                  latency_ms="?", quality="masked-diffusion model (mask method)", method="mask",
+                  notes=f"read at [MASK] on backend 'llada'; weights: {repo}",
+                  llada_repo=repo)
+
+
 def routing_from(fitted: Preset, above_options: int) -> dict:
     """The `routing` block of a pointer preset, from a vector preset fitted on the same weights.
 
@@ -238,6 +256,76 @@ PRESETS: dict[str, Preset] = {
               "> none 0.500, and the task center of a Context(examples=...) is best at 0.585. The "
               "asset covers 'one_word'; 'question_options' falls back to the mean of the option "
               "vectors, which measured 0.535 overall.",
+    ),
+    # LLaDA / iLLaDA: masked-diffusion LMs read at [MASK] (method='mask', backend='llada'). No fitting:
+    # the option distribution is the softmax of the masked-position logits over the option tokens.
+    # The mask token id is read from the tokenizer, else 126336 (LLaDA) / 5 (iLLaDA) — see backends/llada.py.
+    "llada-8b-instruct": Preset(
+        name="llada-8b-instruct",
+        repo="",
+        llada_repo="GSAI-ML/LLaDA-8B-Instruct",
+        backend="llada",
+        formulations=(),
+        tau=1.0,
+        latency_ms="?",
+        quality="masked-diffusion model read at [MASK] (Option 1); zero-shot, no head",
+        method="mask",
+        notes="Native [MASK] readout of a diffusion LM (arXiv:2502.09992). One forward pass, "
+              "bidirectional; the option distribution is the masked-position softmax. Set "
+              "JUL_LLADA_MASK_ID to override the mask token id.",
+    ),
+    "illada-8b-instruct": Preset(
+        name="illada-8b-instruct",
+        repo="",
+        llada_repo="GSAI-ML/iLLaDA-8B-Instruct",
+        backend="llada",
+        formulations=(),
+        tau=1.0,
+        latency_ms="?",
+        quality="improved masked-diffusion model read at [MASK] (Option 1)",
+        method="mask",
+        notes="iLLaDA reuses LLaDA's inference code with mask_id=5. Set JUL_LLADA_MASK_ID=5 if the "
+              "tokenizer does not expose a mask token.",
+    ),
+    "llada-moe-instruct": Preset(
+        name="llada-moe-instruct",
+        repo="",
+        llada_repo="inclusionAI/LLaDA-MoE-7B-A1B-Instruct",
+        backend="llada",
+        formulations=(),
+        tau=1.0,
+        latency_ms="?",
+        quality="MoE masked-diffusion (~1B active) read at [MASK]; the intelligence-per-dollar bet",
+        method="mask",
+        notes="LLaDA-MoE-7B-A1B: ~1B active params at inference, mask token <|mask|> id 156895.",
+    ),
+    "llada2-mini-instruct": Preset(
+        name="llada2-mini-instruct",
+        repo="",
+        llada_repo="inclusionAI/LLaDA2.0-mini",
+        backend="llada",
+        formulations=(),
+        tau=1.0,
+        latency_ms="?",
+        quality="LLaDA2.0-mini (16B MoE / 1.4B active, Ling 2.0 base) read at [MASK]; stronger backbone",
+        method="mask",
+        notes="LLaDA2.0-mini: mask token <|mask|> id 156895, vocab 157184, forward().logits per position.",
+    ),
+    # MLX (Apple Silicon) 4-bit conversion of LLaDA2-MoE, read at [MASK] on backend 'mlx_llada'.
+    # Same mask method as the 'llada' presets, but the forward runs through mlx_lm on the Metal GPU
+    # (backends/mlx_llada.py + vendored mlx_lm architecture jul/vendor/llada2_moe.py).
+    "llada2-mini-4bit": Preset(
+        name="llada2-mini-4bit",
+        repo="",
+        backend="mlx_llada",
+        mlx_llada_repo="mlx-community/LLaDA2.0-mini-preview-4bit",
+        formulations=(),
+        tau=1.0,
+        latency_ms="?",
+        quality="MLX 4-bit LLaDA2-MoE (16B total / ~1B active) read at [MASK]; low-latency on-device",
+        method="mask",
+        notes="mlx-community/LLaDA2.0-mini-preview-4bit, mask token <|mask|> id 156895. "
+              "~8-9 GB resident; bidirectional single-pass [MASK] readout.",
     ),
 }
 

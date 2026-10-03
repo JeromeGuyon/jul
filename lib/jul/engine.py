@@ -114,6 +114,12 @@ class Engine:
         if preset.method == "pointer":
             from .decision import DecisionSpec, PointerReader
             self.pointer = PointerReader(backbone, DecisionSpec.load(backbone.model_dir))
+        self.mask = None
+        if preset.method == "mask":
+            from .mask import MaskReader, MaskSpec, spec_source
+            src = spec_source(backbone.repo) if backbone.repo else None
+            spec = MaskSpec.load(src) if src else MaskSpec.default()
+            self.mask = MaskReader(backbone, spec)
         self.cross = None
         if preset.cross:
             from . import cross

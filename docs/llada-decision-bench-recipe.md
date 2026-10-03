@@ -228,6 +228,9 @@ Latence servie : ~51–55 ms/décision (A10G), plate et prévisible (un forward 
   l'embedding de la lettre A/B/C, sans contenu d'option), score +5.6 non significatif (n=286). Confound :
   la LoRA est entraînée sur la loss de la tête, pas en CE.
 - **Backbone plus fort à recette iso (iLLaDA-8B)** : +2.0 sur ALL, non significatif (voir en tête).
+- **Tête choice listwise** (port de la lecture wemm, entraînée seule sur l'adapter iLLaDA-v7 figé) :
+  choice UNSEEN **0.806 → 0.556, Δ−0.250 [−0.291, −0.208]** ; noul et score inchangés au bit près
+  (`runs/illada-listwise/`). Rebrancher la lecture sans ré-entraîner l'adapter détruit choice.
 - **Slot `[MASK]` par label** (choice) : effondrement du 1er slot (asymétrie de position).
 - **Multi-token forcé sur le choice d'un modèle CE** : régresse (0.805 → 0.680) — d'où `auto-ce`.
 
@@ -242,13 +245,11 @@ Latence servie : ~51–55 ms/décision (A10G), plate et prévisible (un forward 
 | **score** | 0.493 | 0.661 | **−16.8** | 0.699 | **−20.6** |
 | ALL | 0.733 | 0.829 | −9.6 | 0.851 | −11.8 |
 
-- **score** reste le plus gros fossé. Ce n'est pas le backbone (iLLaDA ne le ferme pas) ; la cause la
-  plus probable est le corpus de calibration ordinale, ou la lecture. Pistes non faites : readout
-  ordinal dédié (lire la *position* sur l'échelle plutôt que la description de chaque niveau), corpus
-  score plus riche.
+- **score** reste le plus gros fossé. Le backbone ne le ferme pas, et rebrancher la lecture de choice
+  sur l'adapter figé le détruit. La cause ouverte est le corpus, en particulier la calibration ordinale.
+  Piste non faite : un readout ordinal qui lit la position sur l'échelle plutôt que la description de
+  chaque niveau.
 - Le corpus de wemm v2.1 est fermé (open-weights, closed-data) : le test « même corpus » est impossible.
-- Diagnostic en cours : une tête choice **listwise** lue au marqueur de chaque option, entraînée seule
-  sur l'adapter iLLaDA-v7 figé, pour trancher si la lecture bloque choice.
 
 ---
 

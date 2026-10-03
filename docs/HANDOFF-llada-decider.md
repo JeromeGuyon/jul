@@ -176,22 +176,30 @@ to a `read_head.pt` (eval harness auto-exports it when the adapter tar contains 
    recipe; the gap to wemm (−9.6 UNSEEN, −16.8 on score) lies in corpus and/or readout.
    Repro: `python scripts/paired_bootstrap.py --baseline runs/v7/predictions.jsonl
    --candidate runs/illada-v7/predictions.jsonl --baseline-label v7 --candidate-label illada`.
-3. **Listwise choice head** (dense, cheap, same forward): key = hidden state at EACH option's marker
-   position (sees the option text), not the letter embedding. This is the only honest test of "does the
-   reading block choice?" — the bilinear-on-letter head failed exactly there (choice −2.7). If this does
-   not recover 0.797→higher, listwise probably won't either, and reading is not the bottleneck.
+3. **Listwise choice head — DONE, NEGATIVE.** Port of wemm's reading (`origin/main:lib/jul/cross.py`):
+   query = hidden at `[MASK]` after `Answer:`, key = hidden at the newline closing each option,
+   logit = q·k/√d. Trained alone (choice_q/k, 2.1M, lr 1e-3, proj 256, 2ep) on the frozen iLLaDA-v7
+   adapter (lora_requires_grad=0, 6904 choice examples). Train job 1791058226, eval job 1791059922
+   → `runs/illada-listwise/`. UNSEEN paired vs `runs/illada-v7`: **choice 0.806→0.556, Δ−0.250
+   [−0.291, −0.208]**; noul and score bit-identical (the head stayed choice-only); all −0.110. Latency
+   p50 54.7 / p95 86.7 ms. **Verdict: swapping the readout on the frozen adapter does not recover
+   choice, it destroys it.** The CE adapter's choice skill lives in the anchor channel; this head reads
+   a channel that adapter never trained. Not measured, and not to be opened: the same listwise format
+   trained jointly with the LoRA.
 4. If staying on readout-logits: the plateau is ~0.713 UNSEEN; more data at the same scale did not move
    ALL (decision-v7 vs CE = +1.2, noise). The honest story is: LLaDA-8B dense ≈ 0.713, flat 50 ms/1 GPU;
    wemm 0.829 but 4B needs its closed corpus. LLaDA's edge is latency, not quality.
 
 ## 10. Open review points NOT yet done (from Hermes)
 
-- Split the branch into reviewable PRs.
+- Split the branch into reviewable PRs. Branches exist on `fork`, no PR opened:
+  `split/llada-1-lib`, `split/llada-2-train-eval`, `split/llada-3-docs-research` (they predate the
+  listwise commit `b787a51`).
 - Env vars still read inside the library in places (should be injected).
 - `auto-ce` behavior documentation.
 - `runs/` artifacts not committed to decision-bench results in native format (real run.json, pinned HF
   revision) — if you commit LLaDA runs to decision-bench, use the bench's own runner, not reconstructed
   JSON.
-- Document honest numbers in `docs/llada-decision-bench-recipe.md` (UNSEEN 0.713, not the old best-of
-  0.753) and the alpha=2r bug (an earlier bug where lora_alpha=256 with r=16 gave 16× scaling and
-  collapsed the readout — already fixed, default is now `2*r`).
+- Honest numbers are in `docs/llada-decision-bench-recipe.md` (UNSEEN 0.733 iLLaDA / 0.713 LLaDA, the
+  0.753 kept and marked as a quick-suite best-of) and the alpha=2r bug is documented there (already
+  fixed, default is `2*r`).

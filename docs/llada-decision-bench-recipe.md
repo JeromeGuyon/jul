@@ -1,13 +1,37 @@
-# De zéro à 0.753 : un décideur typé LLaDA sur decision-bench
+# Un décideur typé LLaDA sur decision-bench : 0.71–0.73 UNSEEN à ~50 ms
 
-Recette complète et reproductible pour transformer **LLaDA-8B** (un modèle de diffusion de langage
-masquée, poids publics `GSAI-ML/LLaDA-8B-Instruct`) en un **décideur typé** (choice / noul / score)
-qui atteint **0.753** de précision sur `decision-bench` (suite *quick*, 296 items), contre **0.517**
-au départ et **0.889** pour Jev (la référence).
+Recette complète et reproductible pour transformer un modèle de diffusion de langage masquée
+(**LLaDA-8B** `GSAI-ML/LLaDA-8B-Instruct`, ou **iLLaDA-8B** `GSAI-ML/iLLaDA-8B-Instruct`) en un
+**décideur typé** (choice / noul / score), lu au `[MASK]` en un seul forward.
 
 Tout est mesuré sur GPU (SageMaker, A10G 24 Go). Aucun poids de base n'est modifié : les gains
-viennent (1) du **canal de lecture** (readout) et (2) d'un **adapter LoRA** léger. Chaque effet a été
-isolé par une matrice 2×2.
+viennent (1) du **canal de lecture** (readout) et (2) d'un **adapter LoRA** léger.
+
+---
+
+## Les chiffres honnêtes (à citer)
+
+Bench complet `bench-v1` (2108 items notés), restreint aux sources **UNSEEN** : on retire les sources
+vues à l'entraînement (`JUL_SEEN_EXTRA=dbpedia,mnli,banking77,agnews,trec,imdb,sst5,boolq,amazon,yelp`),
+n = 1591. Config figée avant la mesure, même splitter (`scripts/score_split.py`) pour tous.
+
+| système (UNSEEN, n=1591) | ALL [IC95] | choice | noul | score | p50 | GPU |
+|---|---|---|---|---|---|---|
+| Jev `jev-1.13.0` | 0.851 [0.833, 0.868] | 0.914 | 0.849 | 0.699 | — | API |
+| wemm-4b v2.1 | 0.829 [0.810, 0.847] | 0.872 | 0.859 | 0.661 | — | 1 |
+| **iLLaDA-8B + LoRA CE v7** | **0.733** [0.711, 0.754] | 0.806 | 0.762 | 0.493 | 54.5 ms | 1×A10G |
+| LLaDA-8B + LoRA CE v7 | 0.713 [0.690, 0.734] | 0.797 | 0.745 | 0.437 | 51 ms | 1×A10G |
+
+- iLLaDA − LLaDA (bootstrap apparié, mêmes items) : **+2.0 [−0.1, +4.1]**, sous le seuil de 3 points,
+  **non significatif**. Avant adaptation l'écart était de +14.2 [+7.1, +21.3] (suite quick) : la même
+  adaptation ramène les deux backbones au même niveau, le backbone n'est pas le facteur limitant.
+- Écart à wemm : **−9.6 points UNSEEN**, dont **−16.8 sur score**.
+- L'atout réel de la ligne LLaDA est la **latence** : ~50 ms plate, 1 GPU, un forward. Pas la qualité.
+
+> Le **0.753** des sections 1 à 5 ci-dessous est un résultat **exploratoire** sur la suite *quick*
+> (296 items), où les configs A–E et le routing `auto-ce` ont été conçus en regardant ces mêmes
+> items : c'est un meilleur-de, pas un chiffre à citer. Le 0.889 de Jev est lui aussi sur *quick*
+> (0.873 sur le bench complet).
 
 ---
 
@@ -25,9 +49,10 @@ Trois types de questions (l'API imite celle de Jev) :
 
 ---
 
-## 1. Le résultat, et la décomposition des effets
+## 1. La décomposition des effets (exploratoire, suite quick)
 
-Matrice 2×2 sur `decision-bench` quick (296 items), même matériel (A10G) :
+Matrice 2×2 sur `decision-bench` quick (296 items), même matériel (A10G), LLaDA-8B, ancien corpus
+(~3 900 exemples). Les configs ont été choisies sur ces items : lire les **écarts**, pas les niveaux.
 
 | Config | ALL | choice | noul | score | latence p50 |
 |--------|:---:|:------:|:----:|:-----:|:-----------:|
@@ -109,17 +134,27 @@ Corpus de décisions typées `state / question / options / gold` (ici : ~3 900 e
 de familles, avec soft labels d'un modèle-professeur possibles mais **la CE simple sur le gold suffit
 et généralise mieux** — mesuré : la CE plate bat les variantes pondérées sur le zero-shot).
 
-### Entraînement (SageMaker, ~2 100 s sur A10G spot)
+### Entraînement (recette v7, celle des chiffres honnêtes)
 ```bash
 AWS_PROFILE=<profil> python deployment/sagemaker-eval/launch_train.py \
-    --train <corpus.soft.jsonl> \
+    --train /Users/jerome/dev/jul/data/mix/decision-v7.clean.jsonl \
     --base GSAI-ML/LLaDA-8B-Instruct \
     --stage a --loss ce \
-    --lora-r 16 --lr 1e-4 --epochs 1 \
-    --instance ml.g5.2xlarge --spot
+    --lora-r 16 --epochs 2 --lr 5e-5 --lora-targets q_proj,k_proj,v_proj \
+    --instance ml.g5.2xlarge
 ```
-- **LoRA** sur les projections d'attention (`q/k/v/o`), backbone gelé. Le full fine-tuning d'un 8B
-  s'effondre (oubli catastrophique) ; le LoRA préserve le modèle.
+- Corpus **decision-v7** (suite Kev publique, 15 576 items, décontaminé du bench : 0 recouvrement
+  textuel ; dbpedia et mnli sont partagés, d'où le split UNSEEN). Construit par
+  `scripts/convert_decision_v7.py`. Le run exploratoire de la §1 utilisait ~3 900 exemples, r16,
+  lr 1e-4, 1 epoch.
+- `lora_alpha` vaut **2·r** par défaut (32 pour r=16). Un bug antérieur avait `alpha=256` avec r=16 :
+  facteur 16× qui effondrait le readout. Corrigé ; ne pas fixer alpha à la main sans raison.
+- **LoRA** sur les projections d'attention, backbone gelé. Le full fine-tuning d'un 8B s'effondre
+  (oubli catastrophique) ; le LoRA préserve le modèle. ⚠️ LLaDA n'a pas de `o_proj` (sa projection de
+  sortie s'appelle `attn_out`) : les suffixes par défaut `q/k/v/o` n'adaptent que **q/k/v** sur
+  LLaDA, mais q/k/v/o sur iLLaDA. Pour comparer les deux, passer `--lora-targets q_proj,k_proj,v_proj`.
+- **iLLaDA** : `--base GSAI-ML/iLLaDA-8B-Instruct`. Les launchers fixent seuls transformers 4.57.1 (version
+  sauvegardée du remote code ; lm_head lié à l'embedding) et le `[MASK]` = id 5.
 - La loss `ce` (gold dur) est le bon défaut. `gift` (pondération par entropie, arXiv:2509.20863) et
   `diffusion` (facteur 1/t) sont implémentées mais **régressent le zero-shot** ici (sur-spécialisent
   les familles difficiles, oublient les fortes).
@@ -149,26 +184,27 @@ l'ancre. Si on le lit ensuite en multi-token (mode `auto`), le choice **régress
 
 ```bash
 AWS_PROFILE=<profil> python deployment/sagemaker-eval/launch_dbench.py \
-    --model llada-8b-instruct --suite quick --readout auto-ce \
+    --model llada-8b-instruct --suite full --readout auto-ce \
     --adapter s3://…/output/<ce-job>/output/model.tar.gz
+JUL_SEEN_EXTRA='dbpedia,mnli,banking77,agnews,trec,imdb,sst5,boolq,amazon,yelp' \
+    python scripts/score_split.py <decision-bench>/data/bench-v1.jsonl runs/<x>/predictions.jsonl
 ```
-- Résultat : **ALL 0.753** (choice 0.805, noul 0.820, score 0.375), latence p50 51 ms.
+- Exploratoire (quick, ancien corpus) : ALL 0.753 (choice 0.805, noul 0.820, score 0.375), p50 51 ms.
+- Honnête (full, UNSEEN, v7) : **0.713** (LLaDA-8B), **0.733** (iLLaDA-8B).
 
 ---
 
-## 5. Recette condensée (de 0 à 0.753)
+## 5. Recette condensée
 
-1. **Backbone** : `GSAI-ML/LLaDA-8B-Instruct`, backend `llada` (diffusion masquée, lu au `[MASK]`),
-   shim transformers 5.x.
+1. **Backbone** : `GSAI-ML/iLLaDA-8B-Instruct` (ou LLaDA-8B), backend `llada` (diffusion masquée, lu
+   au `[MASK]`). Shim transformers 5.x pour LLaDA, pin 4.57.1 pour iLLaDA.
 2. **Readouts** (`lib/jul/mask.py`) : choice anchor + multi-token (routé à >10 options), noul oui/non
-   multi-ancres, score ordinal par descriptions. → **0.679, gratuit.**
-3. **Adapter LoRA CE** : LoRA `q/k/v/o`, loss `ce`, 1 epoch, sur ~4 k décisions typées. → aide le
-   choice (0.805) et le noul.
-4. **Routing par type `auto-ce`** : choice→anchor (canal du CE), noul/score→readouts refaits, pour
-   cumuler sans le conflit de canal. → **0.753.**
+   multi-ancres, score ordinal par descriptions. Gratuits en latence.
+3. **Adapter LoRA CE** : LoRA q/k/v, r16, alpha 32, lr 5e-5, 2 epochs, loss `ce`, sur decision-v7.
+4. **Routing par type `auto-ce`** : choice→anchor (canal du CE), noul/score→readouts refaits.
+   → **0.713 UNSEEN (LLaDA-8B), 0.733 (iLLaDA-8B)**.
 
-Budget : 1 job d'entraînement (~35 min GPU) + 1 job d'éval (~15 s de calcul, hors provisioning).
-Latence servie : ~51 ms/décision (A10G), plate et prévisible (un forward unique).
+Latence servie : ~51–55 ms/décision (A10G), plate et prévisible (un forward unique).
 
 ---
 
@@ -185,20 +221,34 @@ Latence servie : ~51 ms/décision (A10G), plate et prévisible (un forward uniqu
   l'architecture MoE en soi. Il **ne se transpose pas** à d'autres MoE : `LLaDA2.0-mini` (16B total,
   1.4B actifs, base Ling 2.0) est un modèle différent dont la latence doit être **mesurée séparément**
   avant toute conclusion.
+- **LLaDA2.0-mini** (MoE 16B, 1.4B actifs) : mesuré, **p50 458 ms / p95 637 ms sur 4×A10G** (`device_map
+  auto`, 32.5 Go en BF16) contre 51 ms sur 1×A10G pour le dense. Critère d'arrêt atteint, non viable ici.
+- **Tête de lecture apprise** (`lib/jul/llada_head.py`, `--head 1`) sur l'état caché au `[MASK]` :
+  bootstrap apparié UNSEEN vs readout-logits, all Δ−0.5 (nul), **choice −2.7 [−5.4, 0.0]** (la clé est
+  l'embedding de la lettre A/B/C, sans contenu d'option), score +5.6 non significatif (n=286). Confound :
+  la LoRA est entraînée sur la loss de la tête, pas en CE.
+- **Backbone plus fort à recette iso (iLLaDA-8B)** : +2.0 sur ALL, non significatif (voir en tête).
 - **Slot `[MASK]` par label** (choice) : effondrement du 1er slot (asymétrie de position).
 - **Multi-token forcé sur le choice d'un modèle CE** : régresse (0.805 → 0.680) — d'où `auto-ce`.
 
 ---
 
-## 7. Le seul gros écart restant à Jev
+## 7. Les écarts restants (UNSEEN, iLLaDA-8B v7)
 
-- choice 0.805 vs 0.93, noul 0.820 vs 0.92 : proches.
-- **score 0.375 vs 0.65** : le dernier vrai fossé. Le readout ordinal reste intrinsèquement difficile
-  au `[MASK]`. Pistes non faites : readout ordinal dédié (lire la *position* sur l'échelle, pas la
-  description de chaque niveau), ou calibration few-shot (biais par niveau sur ~200 exemples de val —
-  hors du zero-shot strict).
-- Global : **0.753 vs 0.889.** Parti de 0.517, on a fermé ~55 % de l'écart, essentiellement par le
-  **canal de lecture** (gratuit) + un **LoRA CE** léger, sans toucher aux poids de base.
+| type | iLLaDA v7 | wemm v2.1 | écart | Jev | écart |
+|---|---|---|---|---|---|
+| choice | 0.806 | 0.872 | −6.6 | 0.914 | −10.8 |
+| noul | 0.762 | 0.859 | −9.7 | 0.849 | −8.7 |
+| **score** | 0.493 | 0.661 | **−16.8** | 0.699 | **−20.6** |
+| ALL | 0.733 | 0.829 | −9.6 | 0.851 | −11.8 |
+
+- **score** reste le plus gros fossé. Ce n'est pas le backbone (iLLaDA ne le ferme pas) ; la cause la
+  plus probable est le corpus de calibration ordinale, ou la lecture. Pistes non faites : readout
+  ordinal dédié (lire la *position* sur l'échelle plutôt que la description de chaque niveau), corpus
+  score plus riche.
+- Le corpus de wemm v2.1 est fermé (open-weights, closed-data) : le test « même corpus » est impossible.
+- Diagnostic en cours : une tête choice **listwise** lue au marqueur de chaque option, entraînée seule
+  sur l'adapter iLLaDA-v7 figé, pour trancher si la lecture bloque choice.
 
 ---
 
@@ -213,4 +263,6 @@ Latence servie : ~51 ms/décision (A10G), plate et prévisible (un forward uniqu
 | `deployment/sagemaker-eval/launch_dbench.py` + `dbench_entry.py` | run decision-bench sur SageMaker, sortie au format du bench |
 | `runs/dbench-{A..E}*.json` | les rapports de la matrice 2×2 |
 
-Résultats bruts : `runs/dbench-E-CE-autoce.json` (le 0.753).
+Résultats bruts : `runs/v7/` et `runs/illada-v7/` (chiffres honnêtes, bench complet) ;
+`runs/dbench-E-CE-autoce.json` (le 0.753 exploratoire sur quick). Comparaisons appariées :
+`scripts/paired_bootstrap.py --baseline … --candidate …`.

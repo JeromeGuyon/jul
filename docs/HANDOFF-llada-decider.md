@@ -157,8 +157,16 @@ to a `read_head.pt` (eval harness auto-exports it when the adapter tar contains 
    `ILLaDAForCausalLM` (both auto classes), attention_mask optional, saved with transformers 4.57.1.
    Silent bugs found and fixed before any GPU job: `_guess_mask_id` returned 3 (UNK) for iLLaDA, and
    `launch_dbench --mask-id` defaulted to 126336 (a valid token in iLLaDA's vocab) → now 5. Both
-   launchers pin 4.57.1 for iLLaDA (tied lm_head under unpinned 5.x is a risk). Still unmeasured:
-   latency (expected ≈ dense 8B) and whether the chat template's think tokens disturb the readout.
+   launchers pin 4.57.1 for iLLaDA (tied lm_head under unpinned 5.x is a risk).
+   **LATENCY MEASURED** (job 1790961340, eu-west-1, 1×A10G, quick 296, no adapter, readout auto,
+   0 errors) → `runs/illadalat/`: **p50 51.3 ms, p95 71.0 ms** ≈ dense. Stop criterion NOT hit.
+   Iso zero-shot vs LLaDA-8B base (`runs/db`, same items/readout, paired bootstrap 10k):
+   all 0.517→0.659 Δ+0.142 [+0.071,+0.213]; noul Δ+0.242 [+0.109,+0.375]; choice Δ+0.055
+   [−0.023,+0.133] n.s.; score Δ+0.100 [−0.075,+0.275] n.s. (n=40). Untrained backbones only — says
+   nothing yet about the adapted UNSEEN ceiling.
+   **Next: CE adapter on decision-v7, same recipe as `runs/v7`, then full eval + UNSEEN split.**
+   Iso trap: LLaDA has no `o_proj` (its output proj is `attn_out`), so the default attention suffixes
+   adapt q/k/v on LLaDA but q/k/v/o on iLLaDA. Pass `--lora-targets q_proj,k_proj,v_proj`.
 3. **Listwise choice head** (dense, cheap, same forward): key = hidden state at EACH option's marker
    position (sees the option text), not the letter embedding. This is the only honest test of "does the
    reading block choice?" — the bilinear-on-letter head failed exactly there (choice −2.7). If this does

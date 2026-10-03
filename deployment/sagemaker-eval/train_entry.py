@@ -49,6 +49,8 @@ def main():
                     help="LoRA alpha; default 2*r (scaling 2x). A fixed 256 with r=16 gives a 16x "
                          "scaling that collapses the readout — always keep alpha ~ 2*r.")
     ap.add_argument("--lora-dropout", type=float, default=0.05)
+    ap.add_argument("--lora-targets", default="",
+                    help="comma-separated module suffixes, overriding --moe-lora-mode (e.g. q_proj,k_proj,v_proj)")
     # Routing-guided MoE LoRA (MoE-Sieve, arXiv 2603.24044): attention-only LoRA ignores the experts.
     ap.add_argument("--moe-lora-mode", default=os.environ.get("JUL_MOE_LORA_MODE", "routing"),
                     choices=["routing", "all", "attention"],
@@ -149,12 +151,17 @@ def main():
         model = PeftModel.from_pretrained(model, args.adapter, is_trainable=True)
         print(f"[llada-train] resumed adapter from {args.adapter}", flush=True)
         moe_info = {"mode": "resumed"}
+        target_modules = None
     else:
         # profile routing on a handful of built examples (one free forward each), before wrapping.
-        calib = [{"input_ids": ex.tokens} for ex in examples[: max(1, args.moe_calib)]]
-        target_modules, moe_info = MLORA.build_target_modules(
-            model, mode=args.moe_lora_mode, hot_frac=args.moe_hot_frac,
-            calib_batches=calib, device=device)
+        if args.lora_targets:
+            target_modules = [t.strip() for t in args.lora_targets.split(",") if t.strip()]
+            moe_info = {"mode": "explicit", "targets": target_modules}
+        else:
+            calib = [{"input_ids": ex.tokens} for ex in examples[: max(1, args.moe_calib)]]
+            target_modules, moe_info = MLORA.build_target_modules(
+                model, mode=args.moe_lora_mode, hot_frac=args.moe_hot_frac,
+                calib_batches=calib, device=device)
         print(f"[llada-train] moe-lora mode={args.moe_lora_mode} "
               f"experts_selected={moe_info.get('experts_selected')}/{moe_info.get('experts_total')} "
               f"gates={moe_info.get('num_gates')} shared={moe_info.get('num_shared')} "
@@ -217,6 +224,7 @@ def main():
     json.dump({"base": args.base, "stage": args.stage, "loss": args.loss, "lora_r": args.lora_r,
                "lora_alpha": args.lora_alpha, "lr": args.lr, "epochs": args.epochs,
                "moe_lora_mode": args.moe_lora_mode, "moe_hot_frac": args.moe_hot_frac,
+               "lora_targets": target_modules,
                "moe_experts_selected": moe_info.get("experts_selected"),
                "moe_experts_total": moe_info.get("experts_total"),
                "examples": len(examples), "mask_id": reader.mask_id},

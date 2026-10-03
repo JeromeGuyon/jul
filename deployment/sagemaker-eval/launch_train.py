@@ -83,6 +83,8 @@ def main():
     ap.add_argument("--mask-id", default="", help="JUL_LLADA_MASK_ID override (else config/tokenizer)")
     ap.add_argument("--head", type=int, default=0, help="1 = learned read head on [MASK] hidden state")
     ap.add_argument("--head-proj", type=int, default=256, help="projection dim of the learned head")
+    ap.add_argument("--lora-targets", default="",
+                    help="comma-separated LoRA module suffixes (else derived from --moe-lora-mode)")
     ap.add_argument("--instance", default="ml.g5.2xlarge")
     ap.add_argument("--image", default=DLC)
     ap.add_argument("--max-run", type=int, default=3600 * 6)
@@ -125,6 +127,8 @@ def main():
              "lr": str(args.lr), "lora-r": str(args.lora_r), "lora-alpha": str(args.lora_alpha),
              "moe-lora-mode": args.moe_lora_mode, "moe-hot-frac": str(args.moe_hot_frac),
              "head": str(args.head), "head-proj": str(args.head_proj)}
+    if args.lora_targets:
+        hyper["lora-targets"] = args.lora_targets
     env = {"LLADA_BASE": args.base, "JUL_DTYPE": "bfloat16"}
     if args.mask_id:
         env["JUL_LLADA_MASK_ID"] = str(args.mask_id)

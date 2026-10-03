@@ -29,6 +29,142 @@ def _load_rows(path: str):
     return [json.loads(l) for l in open(path, encoding="utf-8") if l.strip()]
 
 
+def _train_listwise_head(args, model, tok, reader, to_q, device, PeftModel):
+    """Train the listwise choice head alone, on top of a FROZEN adapter.
+
+    One change under test: a wemm-style listwise reading of choice (query = [MASK] hidden, keys = each
+    option's closing-separator hidden). The CE iLLaDA-v7 adapter is loaded is_trainable=False, so the
+    backbone and its LoRA get no gradient; only the two projections choice_q / choice_k are trained,
+    on CHOICE examples only, with cross-entropy on the gold option. Config is frozen by the caller
+    (proj=256, lr=1e-3, epochs=2, AdamW). Writes read_head.pt + read_head.json + train_config.json.
+    """
+    import json as _json
+    import random as _random
+    import time as _time
+
+    import torch
+    from torch.optim import AdamW
+    from jul import llada_head as LH
+    from jul.types import options_of
+
+    import glob as _glob
+    import tarfile as _tarfile
+
+    def _has_adapter(d):
+        return bool(d) and os.path.isfile(os.path.join(d, "adapter_config.json"))
+
+    # Resolve args.adapter to a directory that actually holds adapter_config.json. SageMaker mounts the
+    # adapter channel as a directory containing model.tar.gz (training channels are NOT auto-extracted),
+    # so the raw channel dir has no adapter_config.json: extract the tar and point at lora_adapter/.
+    ch = args.adapter or os.environ.get("SM_CHANNEL_ADAPTER", "")
+    if not _has_adapter(args.adapter):
+        tars = _glob.glob(os.path.join(ch, "*.tar.gz")) if ch and os.path.isdir(ch) else []
+        if tars:
+            dest = "/opt/ml/adapter"; os.makedirs(dest, exist_ok=True)
+            with _tarfile.open(tars[0]) as t:
+                t.extractall(dest)
+            cand = os.path.join(dest, "lora_adapter")
+            args.adapter = cand if _has_adapter(cand) else dest
+            print(f"[llada-train] extracted frozen adapter -> {args.adapter}", flush=True)
+    if not _has_adapter(args.adapter):
+        raise SystemExit(f"--head-listwise needs a frozen --adapter with adapter_config.json "
+                         f"(got {args.adapter!r}, channel {ch!r})")
+    # load the adapter FROZEN: is_trainable=False -> no LoRA parameter should carry a gradient.
+    model = PeftModel.from_pretrained(model, args.adapter, is_trainable=False)
+    model.eval()                                   # frozen backbone + frozen LoRA
+    lora_params = [(n, p) for n, p in model.named_parameters() if "lora_" in n.lower()]
+    lora_grad = [n for n, p in lora_params if p.requires_grad]
+    print(f"[llada-train] frozen adapter from {args.adapter}: "
+          f"lora_tensors={len(lora_params)} lora_requires_grad={len(lora_grad)}", flush=True)
+    if lora_grad:
+        raise SystemExit(f"adapter not frozen: {len(lora_grad)} LoRA params require grad, e.g. {lora_grad[:3]}")
+
+    # build CHOICE examples only, with the shared listwise prompt builder
+    from jul.mask import _render
+    rows = _load_rows(args.train)
+    examples = []                                  # (tokens, mask_pos, ends, gold_index)
+    skipped_types = {"noul": 0, "score": 0}
+    for r in rows:
+        if r["type"] != "choice":
+            skipped_types[r["type"]] = skipped_types.get(r["type"], 0) + 1
+            continue
+        q = to_q(r)
+        opts = options_of(q)
+        keys = [o.key for o in opts]
+        if r["gold"] not in keys:
+            continue
+        gi = keys.index(r["gold"])
+        state = r["state"] if isinstance(r["state"], str) else _render(r["state"])
+        tokens, mask_pos, ends = reader._listwise_choice_tokens(r["instructions"], opts, state)
+        if len(tokens) <= reader.spec.max_state_tokens + 256 and len(ends) == len(opts):
+            examples.append((tokens, mask_pos, ends, gi))
+    print(f"[llada-train] listwise CHOICE examples={len(examples)} "
+          f"(skipped noul={skipped_types.get('noul',0)} score={skipped_types.get('score',0)}) "
+          f"mask_id={reader.mask_id}", flush=True)
+    if reader.mask_id != 5 and "illada" in args.base.lower():
+        raise SystemExit(f"expected mask_id 5 for iLLaDA, got {reader.mask_id}")
+
+    # the head: only choice_q / choice_k are trained; everything else is frozen
+    in_emb = model.get_input_embeddings()
+    hidden = model.config.hidden_size if hasattr(model.config, "hidden_size") else in_emb.embedding_dim
+    head = LH.ReadHead(hidden=hidden, emb=in_emb, proj=args.head_proj)
+    head = head.to(device=device, dtype=next(model.parameters()).dtype)
+    for n, p in head.named_parameters():
+        p.requires_grad = n.startswith("choice_q.") or n.startswith("choice_k.")
+    head.train()
+    trainable = [(n, p) for n, p in head.named_parameters() if p.requires_grad]
+    n_trainable = sum(p.numel() for _, p in trainable)
+    # the only trainable tensors in the whole run must be the two projections' weight+bias
+    expected = {"choice_q.weight", "choice_q.bias", "choice_k.weight", "choice_k.bias"}
+    got = {n for n, _ in trainable}
+    print(f"[llada-train] trainable head params: tensors={sorted(got)} total={n_trainable}", flush=True)
+    if got != expected:
+        raise SystemExit(f"trainable set must be exactly the two projections, got {sorted(got)}")
+    model_grad = [n for n, p in model.named_parameters() if p.requires_grad]
+    if model_grad:
+        raise SystemExit(f"backbone must be frozen, but {len(model_grad)} params require grad")
+
+    opt = AdamW([p for _, p in trainable], lr=args.lr)
+    rng = _random.Random(args.seed)
+    for epoch in range(args.epochs):
+        order = list(range(len(examples)))
+        rng.shuffle(order)
+        total, n, t0, window = 0.0, 0, _time.time(), 0.0
+        for n_i, idx in enumerate(order, 1):
+            tokens, mask_pos, ends, gold = examples[idx]
+            ids = torch.tensor([tokens], dtype=torch.long, device=device)
+            with torch.no_grad():
+                out = model(input_ids=ids, output_hidden_states=True)
+                hs = out.hidden_states[-1][0]              # (T, hidden) — backbone frozen
+            h_mask = hs[mask_pos].detach()
+            h_ends = hs[ends].detach()
+            loss = LH.listwise_choice_loss(head, h_mask, h_ends, gold, device)
+            opt.zero_grad(); loss.backward(); opt.step()
+            lv = float(loss.detach()); total += lv; n += 1; window += lv
+            if n % 500 == 0:
+                print(f"[llada-train] epoch {epoch+1} step {n} slice_loss={window/500:.4f} "
+                      f"cum_loss={total/n:.4f}", flush=True)
+                window = 0.0
+        print(f"[llada-train] epoch {epoch+1}/{args.epochs} listwise-choice "
+              f"mean_loss={total/max(1,n):.4f} ({_time.time()-t0:.0f}s)", flush=True)
+
+    os.makedirs(args.model_dir, exist_ok=True)
+    # re-save the frozen adapter so the eval tar carries both the adapter and the head
+    model.save_pretrained(os.path.join(args.model_dir, "lora_adapter"))
+    torch.save(head.state_dict(), os.path.join(args.model_dir, "read_head.pt"))
+    _json.dump({"hidden": head.hidden, "proj": head.proj, "max_levels": head.score.out_features,
+                "reading": "listwise"},
+               open(os.path.join(args.model_dir, "read_head.json"), "w"))
+    tok.save_pretrained(args.model_dir)
+    _json.dump({"base": args.base, "stage": "head-listwise", "loss": "ce",
+                "head": "listwise-choice", "frozen_adapter": args.adapter,
+                "proj": args.head_proj, "lr": args.lr, "epochs": args.epochs,
+                "examples": len(examples), "mask_id": reader.mask_id,
+                "trainable_tensors": sorted(got), "trainable_params": n_trainable},
+               open(os.path.join(args.model_dir, "train_config.json"), "w"))
+    print(f"[llada-train] saved listwise head + frozen adapter -> {args.model_dir}", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default=os.environ.get("LLADA_BASE", "inclusionAI/LLaDA-MoE-7B-A1B-Instruct"))
@@ -42,6 +178,11 @@ def main():
     ap.add_argument("--head", type=int, default=0,
                     help="1 = train a learned per-type read head on the [MASK] hidden state (DiffEmbed) "
                          "instead of reading vocabulary logits")
+    ap.add_argument("--head-listwise", type=int, default=0,
+                    help="1 = train ONLY the listwise choice head (wemm port: query=[MASK] hidden, "
+                         "keys=each option's closing-separator hidden) on CHOICE examples only, on top "
+                         "of a FROZEN adapter (--adapter loaded is_trainable=False). The backbone LoRA "
+                         "gets no gradient; only choice_q/choice_k are trained.")
     ap.add_argument("--head-proj", type=int, default=256, help="projection dim of the learned head")
     ap.add_argument("--lr", type=float, default=1e-5, help="GIFT LoRA learning rate")
     ap.add_argument("--lora-r", type=int, default=128, help="GIFT LoRA rank")
@@ -125,6 +266,11 @@ def main():
                         criteria=NoulCriteria(true=o.get("true", "Yes."), false=o.get("false", "No.")))
         levels = [r["options"][k] for k in sorted(r["options"], key=lambda x: int(x))]
         return Score(instructions=r["instructions"], criteria=levels)
+
+    # ---- listwise choice head, trained alone on a FROZEN adapter (the diagnostic of this run) -------
+    if args.head_listwise:
+        _train_listwise_head(args, model, tok, reader, to_q, device, PeftModel)
+        return
 
     rows = _load_rows(args.train)
     examples = []

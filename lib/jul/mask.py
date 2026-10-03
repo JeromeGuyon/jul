@@ -212,6 +212,39 @@ class MaskReader:
         mask_positions = list(range(len(base), len(base) + k))
         return tokens, mask_positions
 
+    def _listwise_choice_tokens(self, instructions: str, options: list[Option],
+                                state: str) -> tuple[list[int], int, list[int]]:
+        """Build the wemm listwise prompt (ported from origin/main:lib/jul/cross.py), shared by
+        training and inference.
+
+            Text: "<state>"
+            Question: <question>
+            Options:
+            - <option text>
+            - <option text>
+            Answer: [MASK]
+
+        Returns (tokens, mask_pos, end_positions): the token ids, the index of the trailing [MASK]
+        (the query, self.mask_id — 5 on iLLaDA), and the index of the newline token that closes each
+        option's line (the keys), in jul's option order. Each piece is tokenized on its own and the
+        ids concatenated, exactly as wemm's `listwise()` does; the option text is the bench option
+        text as-is (bench options carry no description). The model is bidirectional, so each key
+        attends to every option — intended, no causal masking.
+        """
+        tok = self.backbone.tokenizer
+        enc = lambda s: tok.encode(s, add_special_tokens=False)
+        sep = enc("\n")                                            # the option-closing separator
+        ids = enc('Text: "') + enc(state)[: self.spec.max_state_tokens] + enc('"\n')
+        ids += enc(f"Question: {instructions}\nOptions:\n")
+        ends: list[int] = []
+        for o in options:
+            ids = ids + enc(f"- {o.text}")[: self.spec.max_branch_tokens] + sep
+            ends.append(len(ids) - 1)                              # index of the closing "\n"
+        ids = ids + enc("Answer: ")
+        mask_pos = len(ids)
+        ids = ids + [self.mask_id]
+        return ids, mask_pos, ends
+
     # --- scoring ------------------------------------------------------------------------------
 
     def logits(self, state: Any, questions: list[tuple[str, str, list[Option]]]) -> tuple[list[np.ndarray], int]:
@@ -229,9 +262,12 @@ class MaskReader:
         text = state if isinstance(state, str) else _render(state)
         out, spent = [], 0
         for kind, instructions, options in questions:
-            # learned head on the [MASK] hidden state (DiffEmbed): read with the trained per-type head
-            # instead of vocabulary logits. Highest priority when a head is loaded.
-            if self.head is not None:
+            # learned listwise head on choice ONLY. When a read_head.pt is loaded, choice is read with
+            # the trained listwise head (query = [MASK] hidden, keys = each option's closing-separator
+            # hidden); noul and score keep their normal readout (auto/auto-ce/multitoken) below. The
+            # head must not touch noul/score — doing so is the bug this run fixes (a loaded head used
+            # to capture every type).
+            if self.head is not None and kind == "choice":
                 z, used = self._head_scores(kind, text, instructions, options)
                 spent += used
                 out.append(z)
@@ -424,30 +460,24 @@ class MaskReader:
 
     def _head_scores(self, kind: str, state: str, instructions: str,
                      options: list[Option]) -> tuple[np.ndarray, int]:
-        """Read a decision with the learned head on the [MASK] hidden state (not vocab logits).
+        """Read a choice with the learned LISTWISE head (wemm port) on the [MASK] hidden state.
 
-        Builds the same prompt as training, reads the last-layer hidden state at the first [MASK], and
-        applies the per-type head. Returns logits in jul's option order, temperature-scaled.
+        Builds the same listwise prompt as training (`_listwise_choice_tokens`), reads the last-layer
+        hidden state at the [MASK] (query) and at each option's closing separator (keys) in a single
+        forward, and applies the two trained projections: logit_i = (k_i . q)/sqrt(proj). Returns
+        logits in jul's option order (the prompt lays options out in that order). Only called for
+        kind == 'choice' (the router guards this).
         """
         import torch
-        markers = _markers(kind, options, self.spec.markers)
-        anchors = [self._anchor_id(m) for m in markers]
-        tokens, mask_positions = self._prompt_tokens(kind, instructions, markers, options, state)
-        h_np = self.backbone.mask_hidden(tokens, [mask_positions[0]])[0]  # (hidden,)
+        tokens, mask_pos, ends = self._listwise_choice_tokens(instructions, options, state)
+        # one forward: hidden at the [MASK] (query) and at every option-closing separator (keys)
+        hs = self.backbone.mask_hidden(tokens, [mask_pos] + ends)   # (1 + n, hidden)
         dev = next(self.head.parameters()).device
         hd = next(self.head.parameters()).dtype
-        h = torch.tensor(h_np, device=dev, dtype=hd)
+        h_all = torch.tensor(hs, device=dev, dtype=hd)
+        h_mask, h_ends = h_all[0], h_all[1:]
         with torch.inference_mode():
-            if kind == "choice":
-                z = self.head.choice_logits(h, torch.tensor(anchors, device=dev)).float().cpu().numpy()
-                z = self._to_option_order(kind, options, z)
-            elif kind == "noul":
-                # The head is trained with gold_index in jul's option order (options_of(Noul) =
-                # [true, false], see llada_train.build_example), so its logits are already in option
-                # order: no [false, true] remap here (that remap flipped every learned-head answer).
-                z = self.head.noul_logits(h).float().cpu().numpy()
-            else:  # score
-                z = self.head.score_logits(h, len(options)).float().cpu().numpy()
+            z = self.head.listwise_choice_logits(h_mask, h_ends).float().cpu().numpy()
         return z / self.spec.temperature, len(tokens)
 
     def _to_option_order(self, kind, options, z: np.ndarray) -> np.ndarray:

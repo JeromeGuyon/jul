@@ -21,7 +21,9 @@ def test_read_head_does_not_save_or_overwrite_the_backbone_embedding(tmp_path):
     head = ReadHead(hidden=16, emb=emb, proj=4)
     state = head.state_dict()
     assert not any(k.startswith("emb.") for k in state), "the vocab table must not be in read_head.pt"
-    assert "emb" not in dict(head.named_modules()) and len(list(head.parameters())) == 6
+    # q,k (no bias) + noul(w,b) + score(w,b) + choice_q(w,b) + choice_k(w,b) = 10 tensors; the backbone
+    # embedding is NOT among them (it is held outside the module tree).
+    assert "emb" not in dict(head.named_modules()) and len(list(head.parameters())) == 10
     path = tmp_path / "read_head.pt"
     torch.save(state, path)
 

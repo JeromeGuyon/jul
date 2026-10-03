@@ -34,18 +34,36 @@ class ReadHead(nn.Module):
         # (~157k x D for LLaDA2) into read_head.pt, and load_state_dict writes it back over the
         # backbone's embeddings; .to(dtype) on the head would also cast the backbone's table.
         object.__setattr__(self, "emb", emb)
-        self.q = nn.Linear(hidden, proj, bias=False)          # choice query
-        self.k = nn.Linear(emb.embedding_dim, proj, bias=False)  # choice key from option anchor emb
+        self.q = nn.Linear(hidden, proj, bias=False)          # choice query (legacy bilinear-on-letter)
+        self.k = nn.Linear(emb.embedding_dim, proj, bias=False)  # choice key from option anchor emb (legacy)
         self.noul = nn.Linear(hidden, 2)                      # yes/no
         self.score = nn.Linear(hidden, max_levels)            # ordinal levels (sliced to n)
         self.proj = proj
+        # Listwise choice reading, ported from wemm (origin/main:lib/jul/cross.py). The query is the
+        # hidden state at the [MASK]; each option's key is the hidden state of the separator token that
+        # closes its line (so the key SEES the option text, unlike the legacy letter-embedding key that
+        # dropped choice -2.7). Two linear projections, logit_i = (k_i . q) / sqrt(proj). Both project
+        # the backbone hidden state, so choice_k's in-dim is `hidden` (not emb_dim).
+        self.choice_q = nn.Linear(hidden, proj, bias=True)    # listwise query  (from [MASK] hidden)
+        self.choice_k = nn.Linear(hidden, proj, bias=True)    # listwise key    (from each option-end hidden)
 
     def choice_logits(self, h: torch.Tensor, anchor_ids: torch.Tensor) -> torch.Tensor:
-        """h: (D,) mask hidden; anchor_ids: (n,) option anchor token ids. Returns (n,) logits."""
+        """LEGACY bilinear-on-letter head (key = embedding of the A/B/C marker). Kept for the old
+        read_head.pt files and the regression test; NOT used by the listwise reading. h: (D,) mask
+        hidden; anchor_ids: (n,) option anchor token ids. Returns (n,) logits."""
         q = self.q(h)                                   # (proj,)
         with torch.no_grad():
             e = self.emb(anchor_ids)                    # (n, emb_dim) — embedding table is frozen
         k = self.k(e)                                   # (n, proj)
+        return (k @ q) / (self.proj ** 0.5)             # (n,)
+
+    def listwise_choice_logits(self, h_mask: torch.Tensor, h_ends: torch.Tensor) -> torch.Tensor:
+        """Listwise choice reading (wemm port). h_mask: (D,) hidden at the [MASK] (the query);
+        h_ends: (n, D) hidden at each option's closing separator (the keys). Returns (n,) option
+        logits = (k_i . q) / sqrt(proj), in the order the options were laid out in the prompt
+        (jul's option order)."""
+        q = self.choice_q(h_mask)                       # (proj,)
+        k = self.choice_k(h_ends)                       # (n, proj)
         return (k @ q) / (self.proj ** 0.5)             # (n,)
 
     def noul_logits(self, h: torch.Tensor) -> torch.Tensor:
@@ -80,6 +98,18 @@ def head_loss(head: ReadHead, h: torch.Tensor, ex, device, sigma: float = 1.0) -
     logits = head.score_logits(h, n)
     target = _ordinal_target(n, gold, sigma, device, logits.dtype)
     return F.kl_div(F.log_softmax(logits, dim=-1), target, reduction="sum")
+
+
+def listwise_choice_loss(head: ReadHead, h_mask: torch.Tensor, h_ends: torch.Tensor,
+                         gold_index: int, device) -> torch.Tensor:
+    """Cross-entropy on the gold option for the listwise choice reading (wemm port).
+
+    h_mask: (D,) hidden at the [MASK] (query). h_ends: (n, D) hidden at each option's closing
+    separator (keys). The option logits are (k_i . q)/sqrt(proj) in prompt (jul option) order, so the
+    gold index is used directly. Only `head.choice_q` and `head.choice_k` carry gradient here.
+    """
+    logits = head.listwise_choice_logits(h_mask, h_ends)
+    return F.cross_entropy(logits.unsqueeze(0), torch.tensor([gold_index], device=device))
 
 
 #: Keys of the backbone embedding that older read_head.pt files carried; never loaded into the head.

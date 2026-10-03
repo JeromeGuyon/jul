@@ -335,28 +335,143 @@ def test_auto_ce_keeps_choice_on_anchor():
     assert calls["multitoken"] == 1                              # score uses the sequence-likelihood readout
 
 
-def test_learned_head_noul_reads_back_the_trained_answer():
-    """Regression: a head trained on gold=true (gold_index in jul's option order, as train_entry.py
-    builds it) must read P(true) high at inference. The old [false, true] remap in _head_scores
-    flipped every learned-head noul answer."""
+def test_listwise_choice_prompt_mask5_keys_on_newline_and_jul_order():
+    """Free diagnostic (no GPU): the shared listwise builder puts the [MASK] at id 5, each key
+    position falls on the newline token that closes its option line, and a stub backbone yields one
+    logit per option in jul's option order."""
     torch = pytest.importorskip("torch")
-    from types import SimpleNamespace
+    from jul.mask import MaskReader, MaskSpec
+    from jul.types import Choice, options_of
+    from jul import llada_head as LH
+
+    NL = 999  # sentinel id for "\n"
+
+    class _Tok:
+        mask_token = None
+        unk_token_id = 0
+        def encode(self, s, add_special_tokens=False):
+            if s == "\n":
+                return [NL]
+            # deterministic, never emits NL for non-newline text
+            return [((ord(c) % 300) + 1) for c in s][:48] or [1]
+        def convert_tokens_to_ids(self, t):
+            return 5
+
+    class _BB:
+        name = "illada-stub"; backend = "llada"; repo = ""; architecture = "diffusion"
+        def __init__(s):
+            s.tokenizer = _Tok(); s.mask_id = 5; s.vocab = 2000
+        def mask_hidden(s, tokens, positions):
+            # distinct deterministic hidden per position
+            g = np.random.default_rng(7)
+            table = g.standard_normal((len(tokens), 8)).astype(np.float32)
+            return table[np.array(positions)]
+
+    reader = MaskReader(_BB(), MaskSpec.default())
+    assert reader.mask_id == 5
+
+    q = Choice(instructions="which team?", criteria={"billing": "payments", "tech": "bugs", "sales": "pricing"})
+    opts = options_of(q)
+    tokens, mask_pos, ends = reader._listwise_choice_tokens(q.instructions, opts, "charged twice")
+
+    # the query position holds the [MASK] (id 5)
+    assert tokens[mask_pos] == 5
+    # one key per option, each landing exactly on the closing newline token
+    assert len(ends) == len(opts)
+    for e in ends:
+        assert tokens[e] == NL
+    # the stub head yields one logit per option, in jul option order
+    head = LH.ReadHead(hidden=8, emb=torch.nn.Embedding(16, 8), proj=4)
+    reader.head = head.eval()
+    z, used = reader._head_scores("choice", "charged twice", q.instructions, opts)
+    assert z.shape == (len(opts),)
+    assert used == len(tokens)
+    assert np.isfinite(z).all()
+
+
+def test_listwise_head_routes_choice_only():
+    """With a listwise head loaded, choice goes through the head; noul and score must NOT (they keep
+    their auto-ce readout). Guards the routing fix of this run."""
+    from jul.mask import MaskReader, MaskSpec
+    from jul.types import Choice, Noul, Score, Option, options_of
+    import dataclasses
+
+    calls = {"head": 0, "noul": 0, "multitoken": 0, "anchor": 0}
+
+    class _Tok:
+        mask_token = None; unk_token_id = 0
+        def encode(self, s, add_special_tokens=False):
+            if s == "\n":
+                return [999]
+            return [((ord(c) % 300) + 1) for c in s][:48] or [1]
+        def convert_tokens_to_ids(self, t): return 5
+    class _BB:
+        name = "stub"; backend = "llada"; repo = ""
+        def __init__(s): s.tokenizer = _Tok(); s.mask_id = 5; s.V = 400
+        def mask_logits(s, tokens, positions):
+            return np.full((len(positions), s.V), 0.0, dtype=np.float32)
+        def mask_hidden(s, tokens, positions):
+            return np.zeros((len(positions), 8), dtype=np.float32)
+
+    spec = dataclasses.replace(MaskSpec.default(), readout="auto-ce", route_multitoken_above=10)
+    r = MaskReader(_BB(), spec)
+    # a sentinel head object; _head_scores is stubbed to just count and return a vector
+    r.head = object()
+    o_no, o_mt, o_an = r._noul_scores, r._multitoken_scores, r._read_option_logits
+    def hs(kind, state, instr, opts):
+        calls["head"] += 1
+        return np.zeros(len(opts), dtype=np.float32), 1
+    r._head_scores = hs
+    r._noul_scores = lambda *a, **k: (calls.__setitem__("noul", calls["noul"] + 1), o_no(*a, **k))[1]
+    r._multitoken_scores = lambda *a, **k: (calls.__setitem__("multitoken", calls["multitoken"] + 1), o_mt(*a, **k))[1]
+    r._read_option_logits = lambda *a, **k: (calls.__setitem__("anchor", calls["anchor"] + 1), o_an(*a, **k))[1]
+
+    choice = Choice(instructions="q", criteria={"a": "", "b": ""})
+    r.logits("t", [("choice", "q", options_of(choice))])
+    assert calls["head"] == 1                                   # choice -> head
+    r.logits("t", [("noul", "q?", options_of(Noul(instructions="q?")))])
+    assert calls["head"] == 1 and calls["noul"] == 1            # noul -> NOT the head
+    r.logits("t", [("score", "q", options_of(Score(instructions="q", criteria=["lo", "mid", "hi"])))])
+    assert calls["head"] == 1 and calls["multitoken"] == 1      # score -> NOT the head
+    """The learned head is now LISTWISE and CHOICE-ONLY. A head trained to point at the gold option
+    (query = [MASK] hidden, keys = each option's closing-separator hidden) must read that option back.
+    noul/score no longer go through the head (the router sends only choice to it)."""
+    torch = pytest.importorskip("torch")
     from jul import llada_head as LH
 
     torch.manual_seed(0)
     reader = _reader()
     hidden = 8
-    h = torch.ones(hidden)
-    reader.backbone.mask_hidden = lambda tokens, positions: h.numpy()[None, :]
+    # a fake backbone hidden map: distinct hidden per position so q and the keys differ per option.
+    def fake_mask_hidden(tokens, positions):
+        g = np.random.default_rng(len(tokens))
+        table = g.standard_normal((len(tokens), hidden)).astype(np.float32)
+        return table[np.array(positions)]
+    reader.backbone.mask_hidden = fake_mask_hidden
+
     head = LH.ReadHead(hidden=hidden, emb=torch.nn.Embedding(16, hidden), proj=4)
-    opts = options_of(Noul(instructions="Is it raining?"))
-    keys = [o.key for o in opts]
-    opt = torch.optim.SGD(head.parameters(), lr=0.5)
-    ex = SimpleNamespace(kind="noul", gold_index=keys.index("true"), anchor_ids=())
-    for _ in range(100):
-        loss = LH.head_loss(head, h, ex, "cpu")
+    # freeze all but the two listwise projections, exactly like training
+    for n, p in head.named_parameters():
+        p.requires_grad = n.startswith("choice_q.") or n.startswith("choice_k.")
+    trainable = {n for n, p in head.named_parameters() if p.requires_grad}
+    assert trainable == {"choice_q.weight", "choice_q.bias", "choice_k.weight", "choice_k.bias"}
+
+    from jul.types import Choice, options_of
+    q = Choice(instructions="which team?", criteria={"billing": "", "tech": "", "sales": ""})
+    opts = options_of(q)
+    gold = 1  # "tech"
+    # build the listwise prompt once; train the projections to point at the gold option on it
+    tokens, mask_pos, ends = reader._listwise_choice_tokens(q.instructions, opts, "charged twice")
+    assert tokens[mask_pos] == reader.mask_id            # the query is the [MASK]
+    hs = fake_mask_hidden(tokens, [mask_pos] + ends)
+    h_mask = torch.tensor(hs[0]); h_ends = torch.tensor(hs[1:])
+    opt = torch.optim.AdamW([p for p in head.parameters() if p.requires_grad], lr=0.1)
+    for _ in range(200):
+        loss = LH.listwise_choice_loss(head, h_mask, h_ends, gold, "cpu")
         opt.zero_grad(); loss.backward(); opt.step()
     reader.head = head.eval()
-    z, _ = reader._head_scores("noul", "state", "Is it raining?", opts)
-    p = np.exp(z - z.max()); p /= p.sum()
-    assert p[keys.index("true")] > 0.9
+    reader.backbone.mask_hidden = lambda t, p: hs[np.array([([mask_pos] + ends).index(x) for x in p])]
+    z, _ = reader._head_scores("choice", "charged twice", q.instructions, opts)
+    assert z.shape == (3,)
+    pr = np.exp(z - z.max()); pr /= pr.sum()
+    assert int(np.argmax(pr)) == gold                    # reads back the trained option

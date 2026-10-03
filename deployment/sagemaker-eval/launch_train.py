@@ -82,6 +82,9 @@ def main():
                     help="fraction of hottest experts per layer to adapt (routing mode)")
     ap.add_argument("--mask-id", default="", help="JUL_LLADA_MASK_ID override (else config/tokenizer)")
     ap.add_argument("--head", type=int, default=0, help="1 = learned read head on [MASK] hidden state")
+    ap.add_argument("--head-listwise", type=int, default=0,
+                    help="1 = train ONLY the listwise choice head on a frozen --adapter (choice-only)")
+    ap.add_argument("--adapter", default="", help="S3 URI of a frozen LoRA adapter model.tar.gz (head-listwise)")
     ap.add_argument("--head-proj", type=int, default=256, help="projection dim of the learned head")
     ap.add_argument("--lora-targets", default="",
                     help="comma-separated LoRA module suffixes (else derived from --moe-lora-mode)")
@@ -121,12 +124,18 @@ def main():
                  "DataSource": {"S3DataSource": {"S3DataType": "S3Prefix",
                      "S3Uri": f"s3://{BUCKET}/{prefix}/input/train/",
                      "S3DataDistributionType": "FullyReplicated"}}}]
+    if args.adapter:
+        channels.append({"ChannelName": "adapter",
+                         "DataSource": {"S3DataSource": {"S3DataType": "S3Prefix",
+                             "S3Uri": args.adapter.rsplit("/", 1)[0] + "/",
+                             "S3DataDistributionType": "FullyReplicated"}}})
     hyper = {"sagemaker_program": "train_entry.py",
              "sagemaker_submit_directory": f"s3://{BUCKET}/{prefix}/code/source.tar.gz",
              "base": args.base, "stage": args.stage, "loss": args.loss, "epochs": str(args.epochs),
              "lr": str(args.lr), "lora-r": str(args.lora_r), "lora-alpha": str(args.lora_alpha),
              "moe-lora-mode": args.moe_lora_mode, "moe-hot-frac": str(args.moe_hot_frac),
-             "head": str(args.head), "head-proj": str(args.head_proj)}
+             "head": str(args.head), "head-proj": str(args.head_proj),
+             "head-listwise": str(args.head_listwise)}
     if args.lora_targets:
         hyper["lora-targets"] = args.lora_targets
     env = {"LLADA_BASE": args.base, "JUL_DTYPE": "bfloat16"}

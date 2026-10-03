@@ -5,10 +5,12 @@ difference in accuracy (head - logits) overall and per type. Paired = we resampl
 the correlation between the two systems on the same item is preserved — the right test for "is +5.6 on
 score real or 2-3 items of noise".
 """
+import argparse
 import json
+import os
 import sys
 import numpy as np
-sys.path.insert(0, "/Users/jerome/dev/decision-bench")
+sys.path.insert(0, os.environ.get("JUL_DBENCH", "/Users/jerome/dev/decision-bench"))
 from decision_bench.scoring import judge
 
 BENCH = "/Users/jerome/dev/decision-bench/data/bench-v1.jsonl"
@@ -34,9 +36,17 @@ def verdict(rec, item):
 
 
 def main():
-    items = load(BENCH)
-    lo = load(LOGITS)
-    hd = load(HEAD)
+    ap = argparse.ArgumentParser(description="Paired bootstrap of two prediction runs on the same bench items.")
+    ap.add_argument("--bench", default=BENCH, help="bench-v1.jsonl with gold")
+    ap.add_argument("--baseline", default=LOGITS, help="baseline predictions.jsonl (column 0)")
+    ap.add_argument("--candidate", default=HEAD, help="candidate predictions.jsonl (column 1)")
+    ap.add_argument("--baseline-label", default="base", help="header label for baseline column")
+    ap.add_argument("--candidate-label", default="cand", help="header label for candidate column")
+    args = ap.parse_args()
+
+    items = load(args.bench)
+    lo = load(args.baseline)
+    hd = load(args.candidate)
     rng = np.random.default_rng(0)
 
     rows = {"all": [], "choice": [], "noul": [], "score": []}
@@ -67,7 +77,8 @@ def main():
                 np.percentile(diffs, 2.5), np.percentile(diffs, 97.5),
                 float((diffs > 0).mean()), N)
 
-    print(f"{'type':8} {'n':>5} {'logits':>7} {'head':>7} {'Δ(head-logits)':>15} {'95% CI':>20} {'P(Δ>0)':>7}")
+    bl, cl_ = args.baseline_label, args.candidate_label
+    print(f"{'type':8} {'n':>5} {bl:>7} {cl_:>7} {'Δ('+cl_+'-'+bl+')':>15} {'95% CI':>20} {'P(Δ>0)':>7}")
     for t in ("all", "choice", "noul", "score"):
         r = boot(rows[t])
         if r is None:

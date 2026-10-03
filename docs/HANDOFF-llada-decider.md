@@ -167,6 +167,15 @@ to a `read_head.pt` (eval harness auto-exports it when the adapter tar contains 
    **Next: CE adapter on decision-v7, same recipe as `runs/v7`, then full eval + UNSEEN split.**
    Iso trap: LLaDA has no `o_proj` (its output proj is `attn_out`), so the default attention suffixes
    adapt q/k/v on LLaDA but q/k/v/o on iLLaDA. Pass `--lora-targets q_proj,k_proj,v_proj`.
+   **ADAPTED RESULT** (train job 1791043685, ce/r16/a32/5e-5/2ep, q/k/v, mask_id 5; eval job
+   1791050981, full, auto-ce, 0 err) → `runs/illada-v7/`. UNSEEN n=1591: **ALL 0.733 [0.711,0.754]**,
+   choice 0.806, noul 0.762, score 0.493. Paired vs `runs/v7`: all Δ+0.020 [−0.001,+0.041] P=0.97;
+   choice +0.008 n.s.; noul +0.017 n.s.; score +0.056 [−0.010,+0.119] n.s. Latency with adapter p50
+   54.5 / p95 86.3 ms, 1×A10G. **Verdict: below the 3-pt bar, not significant.** The +14-pt zero-shot
+   lead shrinks to +2 after the same adaptation → backbone knowledge is not the bottleneck at this
+   recipe; the gap to wemm (−9.6 UNSEEN, −16.8 on score) lies in corpus and/or readout.
+   Repro: `python scripts/paired_bootstrap.py --baseline runs/v7/predictions.jsonl
+   --candidate runs/illada-v7/predictions.jsonl --baseline-label v7 --candidate-label illada`.
 3. **Listwise choice head** (dense, cheap, same forward): key = hidden state at EACH option's marker
    position (sees the option text), not the letter embedding. This is the only honest test of "does the
    reading block choice?" — the bilinear-on-letter head failed exactly there (choice −2.7). If this does
